@@ -1107,8 +1107,7 @@ function getLayout(cfg, W, Hact) {
   const pc = cfg.platCfg || {};
   const pwPx = Math.max(16, (pc.len || 4.5) * xs);
   const xIn = numOr(pc.x_in, 2), xOut = numOr(pc.x_out, 30);
-  const xEnd = Math.min(xIn + Math.max(0.01, pc.entry_dist || 2), xOut);
-  const xExS = Math.max(xEnd, xOut - Math.max(0.01, pc.exit_dist || 4));
+  const { xEnterEnd: xEnd, xExitStart: xExS } = createPlatformTrack({ ...pc, x_in: xIn, x_out: xOut }, 0);
   const sinIn = Math.sin(Math.atan2(latOff, Math.max(0.05, xEnd - xIn) * xs));
   const sinOut = Math.sin(Math.atan2(latOff, Math.max(0.05, xOut - xExS) * xs));
   const platDrop = pwPx * Math.max(sinIn, sinOut);
@@ -1737,6 +1736,11 @@ function describePlatform(c, pc) {
  */
 class TelemetryRecorder {
   constructor() {
+    this.reset();
+  }
+
+  /** Descarta o que foi gravado (ao trocar o ciclo de referência, para não misturar dois ciclos). */
+  reset() {
     this.byProfile = Object.fromEntries(LOG_TAB_KEYS.map(k => [k, { uid: undefined, label: undefined, steps: [] }]));
     this.byIdx = {};
   }
@@ -1837,6 +1841,8 @@ function simulate(cfg, { passRelease, servTab }) {
         regimeStartStep = step;
         regimeStartUid = waitingCar.uid;
         logCycleTarget = waitingCar.cycleNum;
+        // A telemetria passa a ser a deste ciclo (que começa a entrar agora): descarta o ciclo 2 gravado até aqui
+        recorder.reset();
       } else if (regimeStart !== null && regimeEnd === null && waitingCar.uid === regimeStartUid + cycleLen) {
         regimeEnd = t;
       }
@@ -2123,6 +2129,7 @@ function createRangeField(def, target, { onChange, parse = raw => parseFloat(raw
   });
   num.addEventListener('change', e => {
     const v = parse(e.target.value);
+    if (parseFloat(e.target.value) !== v) num.value = v.toFixed(decimals);   // inválido/limitado: mostra o valor usado
     rng.value = v;
     num.setAttribute('value', v.toFixed(decimals));
     rng.setAttribute('value', v.toFixed(decimals));
@@ -2149,6 +2156,7 @@ function bindCountPair(key, { min, clampSlider = false, onCommit }) {
   });
   num.addEventListener('change', e => {
     const v = parse(e.target.value);
+    if (parseFloat(e.target.value) !== v) num.value = v;   // inválido/limitado: mostra o valor usado
     const sliderV = clampSlider ? Math.min(SLIDER_COUNT_MAX, v) : v;
     rng.value = sliderV;
     num.setAttribute('value', v);
@@ -2172,8 +2180,11 @@ function bindCalcInput(id, key) {
 
 /* ── Cartões de lista (trechos e passes) ───────────────────────────────── */
 
-/** Esqueleto de um cartão de trecho/passe: cabeçalho (índice, intervalo, badge, excluir) + grade de campos. */
-function createListCard({ removeAction, removeIndex, removeTitle, canRemove, gridClass }) {
+/**
+ * Esqueleto de um cartão de trecho/passe: cabeçalho (índice, intervalo, badge, excluir) + grade de campos.
+ * onRemove (opcional) fica ligado ao próprio item, então continua certo depois que a lista é reordenada.
+ */
+function createListCard({ onRemove, removeTitle, gridClass }) {
   const card = document.createElement('div');
   card.className = 'trecho-card';
   const header = document.createElement('div');
@@ -2185,9 +2196,10 @@ function createListCard({ removeAction, removeIndex, removeTitle, canRemove, gri
       <span class="badge op-badge badge-xs"></span>
     </div>
     <div class="card-actions">
-      ${canRemove ? `<button class="btn btn-delete" data-action="${removeAction}" data-arg="${removeIndex}" title="${removeTitle}">✕ Excluir</button>` : ''}
+      ${onRemove ? `<button class="btn btn-delete" title="${removeTitle}">✕ Excluir</button>` : ''}
     </div>
   `;
+  if (onRemove) header.querySelector('.btn-delete').addEventListener('click', onRemove);
   const grid = document.createElement('div');
   grid.className = gridClass;
   card.append(header, grid);
@@ -2252,8 +2264,9 @@ function renderTrechosList() {
   const headerUpdaters = [];
   rebuildList(container, profileCfg.trechos, (tr, idx) => {
     const { card, grid, idxEl, rangeEl, badgeEl } = createListCard({
-      removeAction: 'removeTrecho', removeIndex: idx, removeTitle: 'Excluir este trecho da linha',
-      canRemove: profileCfg.trechos.length > 1, gridClass: 'grid-6col'
+      onRemove: profileCfg.trechos.length > 1 ? () => removeTrecho(tr) : null,
+      removeTitle: 'Excluir este trecho da linha',
+      gridClass: 'grid-6col'
     });
     const updateHeader = () => {
       const curIdx = profileCfg.trechos.indexOf(tr);
@@ -2308,8 +2321,9 @@ function renderPassControls() {
   const updaters = [];
   rebuildList(container, list, (ps, idx) => {
     const { card, grid, idxEl, rangeEl, badgeEl } = createListCard({
-      removeAction: 'removePass', removeIndex: idx, removeTitle: 'Excluir este passe',
-      canRemove: list.length > 1, gridClass: 'grid-4col'
+      onRemove: list.length > 1 ? () => removePass(ps) : null,
+      removeTitle: 'Excluir este passe',
+      gridClass: 'grid-4col'
     });
     const updateHeader = () => {
       const cur = list.indexOf(ps);
@@ -3101,8 +3115,9 @@ const Renderer = (() => {
     const sw = Math.max(18, x2 - x1);
 
     ctx.save();
-    // Linha vertical do Ponto 0 (a espessura vem do estado deixado pelas etapas anteriores do desenho)
+    // Linha vertical do Ponto 0
     ctx.strokeStyle = 'rgba(192,132,252,0.65)';
+    ctx.lineWidth = 2;
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(sx0, trackY - halfLane - 2);
@@ -3458,6 +3473,7 @@ function setUnit(u) {
   $('unitMin').classList.toggle('active', u === 'min');
   buildParamControls();
   renderTable();
+  saveToLocalMemory();
 }
 
 function setRef(r) {
@@ -3470,6 +3486,7 @@ function setRef(r) {
 function setSpeed(sp) {
   config.speed = sp;
   setActive('sp', SPEED_OPTIONS, sp);
+  saveToLocalMemory();
 }
 
 function togglePlay() {
@@ -3509,9 +3526,10 @@ function addTrecho() {
   showMemToast('✓ Novo Trecho Adicionado');
 }
 
-function removeTrecho(idx) {
+function removeTrecho(trecho) {
   const trechos = config.carsCfg[ui.cfgTab].trechos;
-  if (!trechos || trechos.length <= 1) return;
+  const idx = trechos ? trechos.indexOf(trecho) : -1;
+  if (idx < 0 || trechos.length <= 1) return;
   trechos.splice(idx, 1);
   if (trechos[trechos.length - 1].pos < LINE_END) trechos[trechos.length - 1].pos = 40.0;
   buildParamControls();
@@ -3536,9 +3554,10 @@ function addPass() {
   recompute(false);
 }
 
-function removePass(idx) {
+function removePass(pass) {
   const list = activePasses();
-  if (list.length <= 1) return;
+  const idx = list.indexOf(pass);
+  if (idx < 0 || list.length <= 1) return;
   list.splice(idx, 1);
   renderPassControls();
   recompute(false);
@@ -3605,10 +3624,8 @@ const ACTIONS = {
   },
   setCfgTab,
   addTrecho,
-  removeTrecho: arg => removeTrecho(Number(arg)),
   setPassTab,
   addPass,
-  removePass: arg => removePass(Number(arg)),
   toggleRelease: () => {
     ui.passRelease = !ui.passRelease;
     recompute(false);

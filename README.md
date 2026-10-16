@@ -30,8 +30,9 @@ canvas**. O CSS usa variáveis de tema e classes utilitárias (nenhum `style="..
 
 ## Equivalência com a v10
 
-Nenhuma funcionalidade foi alterada. Isso é verificado por `tests/equivalence.mjs`, que abre a v10 original
-(`tests/reference/Telemetria_ME1_v10.html`) e a versão nova lado a lado no Chromium, aplica as mesmas ações e compara:
+Fora as correções listadas abaixo, nenhuma funcionalidade foi alterada. Isso é verificado por
+`tests/equivalence.mjs`, que abre a v10 original (`tests/reference/Telemetria_ME1_v10.html`, com as mesmas correções
+aplicadas como remendos mínimos) e a versão nova lado a lado no Chromium, aplica as mesmas ações e compara:
 
 - resultados internos da simulação (todos os quadros da animação, telemetria, hora a hora, balanço dos passes) — bit a bit;
 - texto visível, tabelas (texto e cor de cada célula), valores dos campos, posição de rolagem e foco;
@@ -41,7 +42,8 @@ Nenhuma funcionalidade foi alterada. Isso é verificado por `tests/equivalence.m
 - memória salva no PC, `.json` exportado e a cópia `.TXT` (que deve abrir "trancada" e funcionando).
 
 Roda 14 cenários roteirizados (sequências, tamanhos, unidades, tabelas, passes, linha travada/liberada, Servant,
-plataforma, trechos, janela, memória, importação de formatos antigos, proteção) e 40 configurações aleatórias.
+plataforma, trechos, janela, memória, importação de formatos antigos, proteção) e 40 configurações aleatórias. Cada
+bug corrigido tem ainda um teste próprio, que precisa reproduzir o bug na v10 original e passar na versão nova.
 
 ```bash
 npm install
@@ -50,22 +52,25 @@ npm test                      # tudo
 node tests/equivalence.mjs --only=passes --fuzz=0   # um cenário
 ```
 
-## Pontos de atenção encontrados na v10 (mantidos como estão)
+## Bugs da v10 corrigidos
 
-Comportamentos que parecem não intencionais. Foram **preservados** para não mudar nada no funcionamento; ficam
-registrados para decidir depois:
-
-1. **"✕ Excluir" depois de reordenar** — ao mudar a posição de um trecho (ou a entrada de um passe) a lista é
-   reordenada, mas os cartões não são redesenhados: o botão Excluir passa a apagar **outro** item. Ex.: com trechos em
-   7,6 / 18 / 26,3 / 40 m, mover o 1º para 30 m e clicar no Excluir dele apaga o de 18 m.
+1. **"✕ Excluir" depois de reordenar** — ao mudar a posição de um trecho (ou a entrada de um passe), o botão Excluir
+   apagava **outro** item. Ex.: com trechos em 7,6 / 18 / 26,3 / 40 m, mover o 1º para 30 m e clicar no Excluir dele
+   apagava o de 18 m. Agora o botão apaga sempre o item do próprio cartão.
 2. **Telemetria de dois ciclos misturada** — com espaçamento de entrada curto (E0 ≈ 1,3–2,5 m), a tabela por veículo
-   (V1..Vn) junta passos de dois ciclos diferentes (aparecem trechos voltando, ex.: "36,62m → 0,02m") e a aba por
-   perfil pode terminar antes dos 40 m. Com o E0 padrão (4,6 m) não acontece.
-3. **Unidade de tempo e velocidade da animação** só são gravadas na memória na próxima alteração que dispara o
-   salvamento; trocar e fechar a página em seguida perde a escolha.
-4. Digitar um valor inválido nos campos de quantidade (ex.: 0) mantém o número digitado na tela, embora o valor usado
-   seja o mínimo (1).
-5. Com "Trajeto de Entrada" = 0 digitado no campo, a altura automática da janela considera 2 m, enquanto a simulação e
-   o desenho usam 0,01 m (só afeta a altura da janela).
-6. A senha do download não fica mais em texto puro (agora é comparada por SHA-256), mas é uma barreira de uso casual:
-   quem tem o arquivo `.html` consegue ler o código. O selo "Protegido por Criptografia" é visual.
+   (V1..Vn) juntava passos de dois ciclos (trechos "voltando", ex.: "36,62m → 0,02m") e a aba por perfil podia parar
+   antes dos 40 m. Agora a telemetria é sempre de um único ciclo, o do fluxo contínuo (o mesmo do balanço dos passes).
+   Com o E0 padrão (4,6 m) nada muda.
+3. **Unidade de tempo e velocidade da animação** não eram gravadas na memória na hora; trocar e fechar a página em
+   seguida perdia a escolha. Agora são salvas imediatamente.
+4. **Campos com valor inválido** (ex.: 0 em "Qtd. Sequência", texto em um campo numérico) continuavam mostrando o que
+   foi digitado, embora o valor usado fosse outro (o mínimo). Agora mostram o valor efetivamente usado.
+5. **"Trajeto de Entrada/Saída" = 0** — a altura automática da janela considerava 2 m / 4 m, enquanto a simulação e o
+   desenho usam 0,01 m. Agora as três partes usam o mesmo cálculo do trilho.
+6. **Linha tracejada do Ponto 0 da Servant** saía com 5 px em vez de 2 px quando não havia cota de folga desenhada
+   (ex.: no instante t = 0). Agora é sempre 2 px.
+
+## Observação sobre a proteção
+
+A senha do download não fica mais em texto puro (agora é comparada por SHA-256), mas é uma barreira de uso casual:
+quem tem o arquivo `.html` consegue ler o código. O selo "Protegido por Criptografia" é visual.

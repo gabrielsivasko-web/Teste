@@ -1,8 +1,9 @@
 // Teste de equivalência: a versão refatorada (Telemetria_ME1.html) deve se comportar exatamente como a v10
-// original (tests/reference/Telemetria_ME1_v10.html). As duas páginas recebem as mesmas ações, no Chromium, e são
-// comparadas em: resultados internos da simulação (quadros, telemetria, hora a hora, balanço dos passes), texto
-// visível, estilo computado de todos os elementos, pixels do canvas em vários instantes, captura da página inteira,
-// memória salva no PC e arquivos baixados.
+// original (tests/reference/Telemetria_ME1_v10.html) com as correções de bugs aplicadas (REFERENCE_FIXES, abaixo).
+// As duas páginas recebem as mesmas ações, no Chromium, e são comparadas em: resultados internos da simulação
+// (quadros, telemetria, hora a hora, balanço dos passes), texto visível, estilo computado de todos os elementos,
+// pixels do canvas em vários instantes, captura da página inteira, memória salva no PC e arquivos baixados.
+// Além disso, cada bug corrigido tem um teste próprio que o reproduz na v10 original e confirma a correção.
 //
 // Uso:  npm install && npm test          (ou: node tests/equivalence.mjs [--fuzz=N] [--only=nome] [--no-screens])
 import { chromium } from 'playwright';
@@ -29,8 +30,44 @@ const HOOK_MARK = '\nboot();\n})();';
 if (!newSrc.includes(HOOK_MARK)) throw new Error('Marcador de inicialização não encontrado na versão nova');
 const NEW_HOOKED = path.join(tmpDir, 'new.html');
 fs.writeFileSync(NEW_HOOKED, newSrc.replace(HOOK_MARK, '\nboot();\nwindow.__ME1__ = { config, ui, playback, getResults: () => results };\n})();'));
+// ── Referência = v10 + as mesmas correções de bugs, como remendos mínimos (cada um deve casar exatamente 1 vez) ──
+const REFERENCE_FIXES = [
+  { // 1. "Excluir" apaga o item do próprio cartão, mesmo depois de a lista ser reordenada
+    find: ' onclick="removeTrecho(${idx})"', replace: '' },
+  { find: "    const stopBadgeEl = header.querySelector('.trecho-stop-badge');",
+    replace: "    const stopBadgeEl = header.querySelector('.trecho-stop-badge');\n    const __del = header.querySelector('button'); if (__del) __del.onclick = () => { const i = activeCfg.trechos.indexOf(tr); if (i >= 0) removeTrecho(i); };" },
+  { find: ' onclick="removePass(${idx})"', replace: '' },
+  { find: "    const opEl = header.querySelector('.pass-op-badge');",
+    replace: "    const opEl = header.querySelector('.pass-op-badge');\n    const __del = header.querySelector('button'); if (__del) __del.onclick = () => { const i = list.indexOf(ps); if (i >= 0) removePass(i); };" },
+  { // 2. Telemetria de um ciclo só: ao começar o regime descarta o que foi gravado do ciclo 2
+    find: '        logCycleTarget = waitingCar.cycleNum;',
+    replace: "        logCycleTarget = waitingCar.cycleNum;\n        Object.keys(rawIdxSteps).forEach(k => delete rawIdxSteps[k]); ['C1', 'C2', 'C3', 'PLAT_XDF'].forEach(k => { rawProfileSteps[k] = []; });" },
+  { // 3. Unidade de tempo e velocidade da animação salvas na hora
+    find: '  renderTable();\n}\n\nfunction setRef(r) {', replace: '  renderTable();\n  saveToLocalMemory();\n}\n\nfunction setRef(r) {' },
+  { find: "    if (el) el.classList.toggle('active', v === sp);\n  });\n}", replace: "    if (el) el.classList.toggle('active', v === sp);\n  });\n  saveToLocalMemory();\n}" },
+  { // 4. Ao confirmar um campo, ele mostra o valor efetivamente usado (inválido / abaixo do mínimo)
+    find: "    num.addEventListener('change', e => {\n      const v = Math.max(1, parseInt(e.target.value) || 1);",
+    replace: "    num.addEventListener('change', e => {\n      const v = Math.max(1, parseInt(e.target.value) || 1);\n      if (parseFloat(e.target.value) !== v) num.value = v;" },
+  { find: "    numL4.addEventListener('change', e => {\n      const v = Math.max(0, parseInt(e.target.value) || 0);",
+    replace: "    numL4.addEventListener('change', e => {\n      const v = Math.max(0, parseInt(e.target.value) || 0);\n      if (parseFloat(e.target.value) !== v) numL4.value = v;" },
+  { find: "    num.addEventListener('change', e => {\n      const v = Math.max(1.0, parseFloat(e.target.value) || 1.0);",
+    replace: "    num.addEventListener('change', e => {\n      const v = Math.max(1.0, parseFloat(e.target.value) || 1.0);\n      if (parseFloat(e.target.value) !== v) num.value = v.toFixed(2);" },
+  { find: "  num.addEventListener('change', e => {\n    const v = parseFloat(e.target.value) || 0;",
+    replace: "  num.addEventListener('change', e => {\n    const v = parseFloat(e.target.value) || 0;\n    if (parseFloat(e.target.value) !== v) num.value = v.toFixed(decimals);" },
+  { // 5. Altura automática da janela usa o mesmo trajeto de entrada/saída da simulação (inclusive 0 m)
+    find: 'Math.max(0.01, pc.entry_dist || 2)', replace: "Math.max(0.01, typeof pc.entry_dist === 'number' ? pc.entry_dist : 2)" },
+  { find: 'Math.max(0.01, pc.exit_dist || 4)', replace: "Math.max(0.01, typeof pc.exit_dist === 'number' ? pc.exit_dist : 4)" },
+  { // 6. Linha do Ponto 0 da Servant sempre com 2 px (antes herdava 2 ou 5 px do desenho anterior)
+    find: '    ctx.setLineDash([3, 3]);', replace: '    ctx.lineWidth = 2;\n    ctx.setLineDash([3, 3]);' }
+];
+let refSrc = fs.readFileSync(REF_FILE, 'utf8');
+for (const { find, replace } of REFERENCE_FIXES) {
+  const count = refSrc.split(find).length - 1;
+  if (count !== 1) throw new Error(`Remendo da referência casou ${count} vezes: ${find}`);
+  refSrc = refSrc.replace(find, () => replace);
+}
 const REF_COPY = path.join(tmpDir, 'ref.html');
-fs.copyFileSync(REF_FILE, REF_COPY);
+fs.writeFileSync(REF_COPY, refSrc);
 
 // ── Leitura do estado interno, com o mesmo formato nas duas versões ──
 const PERSISTED = ['seqMode', 'nC2', 'nC1', 'unit', 'ref10', 'speed', 'calcMult', 'calcCadencia', 'l4After', 'rngSeed', 'global', 'lengths', 'widths', 'view', 'carsCfg', 'platCfg', 'passCfg', 'servCfg'];
@@ -673,6 +710,109 @@ const STORAGE_SCENARIOS = {
   memoria_string: [[STORAGE_KEY, '"abc"']]
 };
 
+// ── Bugs corrigidos: cada teste deve FALHAR na v10 original (o bug existe) e PASSAR na versão nova ──
+async function openPlain(browser, file, cfg) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  if (cfg) {
+    await ctx.addInitScript(([k, c]) => {
+      if (sessionStorage.getItem('__seeded')) return;
+      sessionStorage.setItem('__seeded', '1');
+      localStorage.setItem(k, JSON.stringify({ config: c }));
+    }, [STORAGE_KEY, cfg]);
+  }
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto('file://' + file);
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  return { page, ctx, errors };
+}
+const commitNumber = (page, sel, v) => page.evaluate(([s, val]) => {
+  const el = document.querySelector(s);
+  el.value = val;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}, [sel, String(v)]);
+const tableRanges = page => page.evaluate(() => Array.from(document.querySelectorAll('#tableBody tr'))
+  .map(tr => (tr.children[1] ? tr.children[1].textContent : '').match(/([\d.]+)m → ([\d.]+)m/))
+  .filter(Boolean).map(m => [Number(m[1]), Number(m[2])]));
+
+const BUG_CHECKS = {
+  async 'Excluir após reordenar apaga o item certo'(browser, file) {
+    const { page, ctx } = await openPlain(browser, file);
+    await commitNumber(page, F.trecho(1, 1), 30);   // 1º trecho (7,6 m) vai para 30 m
+    await page.locator(F.trechoDel(1)).click();       // e é excluído pelo botão do próprio cartão
+    const ends = await page.evaluate(() => Array.from(document.querySelectorAll('#carTrechosContainer .trecho-badge-title'))
+      .map(el => el.children[1].textContent));
+    await ctx.close();
+    return { ok: !ends.join().includes('30.0m') && ends.join().includes('18.0m'), info: ends.join(' ') };
+  },
+  async 'Telemetria não mistura ciclos (E0 curto)'(browser, file) {
+    const problems = [];
+    const cfgs = [
+      { seqMode: 'C2_C1', l4After: 0, carsCfg: { C1: { E0: 1.3 }, C2: { E0: 1.3 }, C3: { E0: 1.3 } } },
+      { seqMode: 'ONLY_C1', l4After: 1, carsCfg: { C1: { E0: 2.5 } } }
+    ];
+    for (const cfg of cfgs) {
+      const { page, ctx } = await openPlain(browser, file, cfg);
+      const views = [...['C1', 'C2', 'C3'].map(k => ['tab', k]),
+        ...(await page.evaluate(() => Array.from(document.querySelectorAll('#carSelectDropdown option')).map(o => o.value).filter(Boolean))).map(v => ['sel', v])];
+      for (const [kind, key] of views) {
+        if (kind === 'tab') await page.locator('#pTab_' + key).click();
+        else await page.selectOption('#carSelectDropdown', key);
+        const ranges = await tableRanges(page);
+        const back = ranges.find(([a, b]) => b < a - 1e-9);
+        if (back) problems.push(`${key}: ${back[0]}m → ${back[1]}m`);
+        if (kind === 'tab' && ranges.length && ranges[ranges.length - 1][1] < 39) problems.push(`${key} termina em ${ranges[ranges.length - 1][1]}m`);
+      }
+      await ctx.close();
+    }
+    return { ok: !problems.length, info: problems.slice(0, 2).join('; ') || 'telemetria contínua' };
+  },
+  async 'Unidade e velocidade salvas na hora'(browser, file) {
+    const { page, ctx } = await openPlain(browser, file);
+    await page.locator('#unitMin').click();
+    await page.locator('#sp5').click();
+    await page.reload();
+    const kept = await page.evaluate(() => ['unitMin', 'sp5'].map(id => document.getElementById(id).classList.contains('active')));
+    await ctx.close();
+    return { ok: kept.every(Boolean), info: `após recarregar: min=${kept[0]} 5x=${kept[1]}` };
+  },
+  async 'Campo mostra o valor efetivamente usado'(browser, file) {
+    const { page, ctx } = await openPlain(browser, file);
+    await commitNumber(page, '#num_nC1', 0);
+    await commitNumber(page, F.entry(2), 'x');
+    const shown = await page.evaluate(sel => [document.getElementById('num_nC1').value, document.querySelector(sel).value], F.entry(2));
+    await ctx.close();
+    return { ok: shown[0] === '1' && shown[1] === '0.00', info: `Qtd. X62 = "${shown[0]}", Dmin = "${shown[1]}"` };
+  },
+  async 'Altura automática com trajeto de entrada 0'(browser, file) {
+    const autoH = async entry => {
+      const { page, ctx } = await openPlain(browser, file, { platCfg: { entry_dist: entry, len: 9, x_in: 2 } });
+      const h = await page.evaluate(() => Number(document.getElementById('v_h').value));
+      await ctx.close();
+      return h;
+    };
+    const [h0, h001] = [await autoH(0), await autoH(0.01)];
+    return { ok: h0 === h001, info: `entrada 0 → ${h0}px; 0,01 → ${h001}px` };
+  },
+  async 'Linha do Ponto 0 sempre com 2 px'(browser, file) {
+    const { page, ctx } = await openPlain(browser, file);
+    const width = await page.evaluate(async () => {
+      const proto = CanvasRenderingContext2D.prototype;
+      const stroke = proto.stroke;
+      let found = null;
+      proto.stroke = function (...a) { if (this.strokeStyle === 'rgba(192, 132, 252, 0.65)') found = this.lineWidth; return stroke.apply(this, a); };
+      document.getElementById('playBtn').click();
+      document.querySelector('.controls-bar button:nth-child(3)').click();   // t = 0: só o carro aguardando, sem cotas
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      proto.stroke = stroke;
+      return found;
+    });
+    await ctx.close();
+    return { ok: width === 2, info: `espessura em t=0: ${width}px` };
+  }
+};
+
 // ── Configurações aleatórias (dentro dos limites dos sliders) ──
 function mulberry32(seed) {
   return () => {
@@ -737,6 +877,18 @@ try {
     }
     log(`  ${failures ? '·' : '✔'} ${name} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   };
+
+  if (!ONLY || ONLY === 'correcoes') {
+    log('Bugs corrigidos (v10 original × nova)');
+    for (const [name, check] of Object.entries(BUG_CHECKS)) {
+      checks++;
+      const before = await check(browser, REF_FILE);
+      const after = await check(browser, NEW_FILE);
+      if (before.ok) fail(name, 'o teste não reproduz o bug na v10 original', before.info);
+      if (!after.ok) fail(name, 'bug continua na versão nova', after.info);
+      log(`  ${!before.ok && after.ok ? '✔' : '·'} ${name} — v10: ${before.info} | nova: ${after.info}`);
+    }
+  }
 
   log('Cenários roteirizados');
   for (const [name, body] of Object.entries(SCENARIOS)) await runScenario(name, {}, body);
