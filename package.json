@@ -1,0 +1,13 @@
+{
+  "name": "telemetria-me1",
+  "private": true,
+  "description": "Telemetria ME1 — simulador de fluxo da linha XDF / X62 (arquivo único) e teste de equivalência com a v10",
+  "author": "Gabriel Ivasko",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/equivalence.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  }
+}
