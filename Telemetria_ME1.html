@@ -737,22 +737,25 @@
     <div class="btn-group">
       <button class="btn" id="agvPlayBtn" data-action="agvPlay">▶ Simular</button>
       <button class="btn" data-action="agvRestart">⏮ t = 0</button>
-      <span class="badge" id="agvTimeBadge">t = 0,0 s</span>
+      <span class="badge" id="agvTimeBadge">Dia 1 · 00:00:00</span>
       <select class="btn btn-select" id="agvSpeedSelect" title="Velocidade da animação">
         <option value="1">1x</option>
         <option value="2">2x</option>
         <option value="5" selected>5x</option>
         <option value="10">10x</option>
         <option value="30">30x</option>
+        <option value="60">60x</option>
+        <option value="300">300x</option>
+        <option value="1800">1800x</option>
       </select>
     </div>
     <div class="btn-group">
-      <span class="replicate-label">Horizonte da análise:</span>
-      <div class="pill-input-wrap"><input type="number" class="pill-input" id="agvDuration" min="10" max="7200" step="10" value="300"><span class="pill-unit">s</span></div>
+      <span class="replicate-label" title="Período analisado no relatório de colisões. A simulação dos AGVs continua sem reiniciar.">Horizonte do relatório (dia = 18 h):</span>
+      <div class="pill-input-wrap"><input type="number" class="pill-input" id="agvDuration" min="1" max="60" step="1" value="1"><span class="pill-unit">dias</span></div>
       <span class="badge" id="agvCollisionBadge">Sem colisões</span>
     </div>
   </div>
-  <input type="range" id="agvScrubber" min="0" max="300" step="0.1" value="0">
+  <input type="range" id="agvScrubber" min="0" max="64800" step="1" value="0">
   <div class="agv-tables">
     <div>
       <div class="row-between">
@@ -776,7 +779,7 @@
       </div>
     </div>
   </div>
-  <div class="section-label text-amber mt-10">⚠ Colisões entre AGVs (clique para ver o momento)</div>
+  <div class="section-label text-amber mt-10">⚠ Relatório de colisões entre AGVs no horizonte (clique para ver o momento)</div>
   <div class="table-wrap">
     <table>
       <thead><tr><th>AGVs</th><th>Início</th><th>Duração</th><th>Local</th><th></th></tr></thead>
@@ -1003,14 +1006,14 @@ function createDefaultConfig() {
       // Planilha importada: { fileName, importedAt, passes: { n: { sheet, columns: [...], rows: [[...]] } } }
       sheet: null
     },
-    // Página Fluxo de AGVs (ver AgvModel): nós, trechos desenhados, trilhos, AGVs, vista e horizonte da análise (s)
+    // Página Fluxo de AGVs (ver AgvModel): nós, trechos desenhados, trilhos, AGVs, vista e horizonte do relatório (dias de 18 h)
     agvCfg: {
       nodes: [],
       trilhos: [],
       trechos: [],
       agvs: [],
       view: { cx: 0, cy: 0, zoom: 6 },
-      duration: 300,
+      days: 1,
       nextId: 1
     }
   };
@@ -4924,6 +4927,8 @@ const AgvFlow = (() => {
   const PICK_PX = 9;                            // tolerância para clicar num trecho (px)
   const LANE_PX = 4;                            // afastamento entre as cores de trilhos que dividem um trecho (px)
   const SIM_DT = 0.1;                           // passo da análise de colisões (s)
+  const DAY_S = 18 * 3600;                      // um dia de operação = 18 h
+  const MAX_EVENTS = 1000;                      // o relatório para de contar depois disto
   const END_MODES = { stop: 'Para no fim', pingpong: 'Vai e volta', loop: 'Recomeça no início' };
   const DIR_OPTIONS = [[1, '▶ No sentido do trilho'], [-1, '◀ Contra o sentido do trilho']];
   const M = AgvModel;
@@ -4939,7 +4944,7 @@ const AgvFlow = (() => {
   let collisions = [];       // [{ a, b, t0, t1, x, y }]
   let geomCache = new Map(); // trilhoId → geometria
   let drawQueued = false;
-  let analysisTimer = 0;
+  let analysisTimer = 0, analysisRun = 0;
   const undoStack = [];
 
   const ac = () => config.agvCfg;
@@ -5066,44 +5071,105 @@ const AgvFlow = (() => {
     });
   }
 
-  /** Análise de colisões: simula todos os AGVs no horizonte configurado e registra cada intervalo de contato. */
+  const horizonS = () => (ac().days || 1) * DAY_S;
+  const pad2 = v => String(v).padStart(2, '0');
+
+  /** Instante como "Dia N · hh:mm:ss" (dias de 18 h). */
+  function fmtTime(t) {
+    const day = Math.floor(t / DAY_S), r = t - day * DAY_S;
+    return `Dia ${day + 1} · ${pad2(Math.floor(r / 3600))}:${pad2(Math.floor((r % 3600) / 60))}:${pad2(Math.floor(r % 60))}`;
+  }
+
+  /**
+   * Próximo instante em que o AGV "salta" (recomeça no início de um trilho aberto); entre saltos ele anda no máximo
+   * na sua velocidade, o que permite pular os trechos de tempo em que dois AGVs não têm como se encostar.
+   */
+  function nextJump(a, gm, t) {
+    if (!gm || gm.closed || a.endMode !== 'loop' || !(a.speed > 0) || gm.len <= 0) return Infinity;
+    const v = a.speed / 60, run = Math.max(0, t - (a.delay || 0));
+    const d = a.s0 + a.dir * v * run;
+    const target = a.dir > 0 ? (Math.floor(d / gm.len) + 1) * gm.len : (Math.ceil(d / gm.len) - 1) * gm.len;
+    return (a.delay || 0) + (target - a.s0) / (a.dir * v);
+  }
+
+  /**
+   * Relatório de colisões: simula os AGVs no horizonte (passo de 0,1 s) e registra cada intervalo de contato. Cada par
+   * só é testado quando pode se encostar (distância ÷ velocidades), e o cálculo roda em partes para não travar a tela.
+   */
   function analyze() {
-    const list = ac().agvs;
-    const dur = Math.max(1, Number(ac().duration) || 300);
-    const open = new Map();
-    const out = [];
+    const run = ++analysisRun;
+    const list = ac().agvs.slice();
+    const nSteps = Math.round(horizonS() / SIM_DT);
     const reach = Math.hypot(AGV_LONG, AGV_SHORT);
-    for (let t = 0; t <= dur + 1e-9; t += SIM_DT) {
-      const boxes = list.map(a => boxOf(a, poseAt(a, t)));
-      for (let i = 0; i < list.length; i++) {
-        for (let j = i + 1; j < list.length; j++) {
-          const A = boxes[i], B = boxes[j], key = `${list[i].id}|${list[j].id}`;
-          const hit = Math.abs(A.x - B.x) <= reach && Math.abs(A.y - B.y) <= reach && boxesOverlap(A, B);
-          if (hit && !open.has(key)) {
-            const ev = { a: list[i].id, b: list[j].id, t0: t, t1: t, x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
-            open.set(key, ev);
-            out.push(ev);
-          } else if (hit) open.get(key).t1 = t;
-          else open.delete(key);
+    const gms = list.map(a => { const tl = trilho(a.trilhoId); return tl ? geom(tl) : null; });
+    const vmax = list.map(a => Math.max(0, a.speed) / 60);
+    const boxes = list.map(() => ({ k: -1, box: null }));
+    const boxAt = (i, k) => {
+      if (boxes[i].k !== k) boxes[i] = { k, box: boxOf(list[i], poseAt(list[i], k * SIM_DT)) };
+      return boxes[i].box;
+    };
+    const pairs = [];
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) pairs.push({ i, j, next: 0, ev: null });
+    const out = [];
+    let k = 0;
+    const step = () => {
+      if (run !== analysisRun) return;   // outra análise começou
+      const deadline = performance.now() + 25;
+      while (k <= nSteps && out.length < MAX_EVENTS) {
+        const t = k * SIM_DT;
+        let nextK = Infinity;
+        for (const pr of pairs) {
+          if (pr.next <= k) {
+            const A = boxAt(pr.i, k), B = boxAt(pr.j, k);
+            const gap = Math.hypot(A.x - B.x, A.y - B.y) - reach;
+            const vrel = vmax[pr.i] + vmax[pr.j];
+            if (gap <= 0 && boxesOverlap(A, B)) {
+              if (!pr.ev) {
+                pr.ev = { a: list[pr.i].id, b: list[pr.j].id, t0: t, t1: t, x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+                out.push(pr.ev);
+              } else pr.ev.t1 = t;
+              pr.next = vrel > 0 ? k + 1 : Infinity;   // parados encostados: contato até o fim
+              if (vrel === 0) pr.ev.t1 = nSteps * SIM_DT;
+            } else {
+              pr.ev = null;
+              const safe = Math.min(vrel > 0 ? Math.max(0, gap) / vrel : Infinity, nextJump(list[pr.i], gms[pr.i], t) - t, nextJump(list[pr.j], gms[pr.j], t) - t);
+              pr.next = k + Math.max(1, Math.floor(safe / SIM_DT));
+            }
+          }
+          if (pr.next < nextK) nextK = pr.next;
+        }
+        k = nextK;
+        if (performance.now() > deadline) {
+          $('agvCollisionBadge').textContent = `Analisando… ${Math.min(99, Math.floor((k / nSteps) * 100))}%`;
+          setTimeout(step, 0);
+          return;
         }
       }
-      if (out.length >= 500) break;
-    }
-    collisions = out;
-    renderCollisions();
-    requestDraw();
+      collisions = out;
+      renderCollisions();
+      requestDraw();
+    };
+    step();
   }
 
   function scheduleAnalysis() {
     clearTimeout(analysisTimer);
+    analysisRun++;   // cancela a análise em andamento
+    $('agvCollisionBadge').textContent = 'Analisando…';
     analysisTimer = setTimeout(analyze, 150);
   }
 
-  const collidingAt = t => {
+  /** AGVs encostando em outro no instante t (desenho em vermelho), em qualquer instante da simulação contínua. */
+  function collidingAt(t) {
+    const list = ac().agvs, boxes = list.map(a => boxOf(a, poseAt(a, t)));
     const set = new Set();
-    collisions.forEach(c => { if (t >= c.t0 - 1e-9 && t <= c.t1 + SIM_DT) { set.add(c.a); set.add(c.b); } });
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        if (boxesOverlap(boxes[i], boxes[j])) { set.add(list[i].id); set.add(list[j].id); }
+      }
+    }
     return set;
-  };
+  }
 
   /* ── Edição com desfazer ──────────────────────────────────────────────── */
 
@@ -5494,8 +5560,8 @@ const AgvFlow = (() => {
     ctx.textAlign = 'left';
     ctx.fillText(`${barM} m`, 14, H - 23);
     $('agvZoomBadge').textContent = `Grade: 10 m · zoom ${fmt(z, 1)} px/m`;
-    $('agvTimeBadge').textContent = `t = ${fmt(simTime, 1)} s`;
-    $('agvScrubber').value = simTime;
+    $('agvTimeBadge').textContent = fmtTime(simTime);
+    $('agvScrubber').value = Math.min(simTime, horizonS());
   }
 
   function requestDraw() {
@@ -5511,9 +5577,7 @@ const AgvFlow = (() => {
     const dt = lastTs ? (ts - lastTs) / 1000 : 0;
     lastTs = ts;
     if (playing && ui.view === 'agv') {
-      simTime += dt * Number($('agvSpeedSelect').value || 1);
-      const dur = Math.max(1, Number(ac().duration) || 300);
-      if (simTime > dur) simTime = 0;
+      simTime += dt * Number($('agvSpeedSelect').value || 1);   // contínuo: não reinicia no fim do horizonte
       draw();
     }
     requestAnimationFrame(tick);
@@ -5977,15 +6041,16 @@ const AgvFlow = (() => {
   function renderCollisions() {
     const tb = $('agvCollisionBody');
     tb.innerHTML = '';
-    const dur = Math.max(1, Number(ac().duration) || 300);
+    const days = `${ac().days} dia${ac().days > 1 ? 's' : ''}`;
     const badge = $('agvCollisionBadge');
-    badge.textContent = collisions.length ? `⚠ ${collisions.length} colisão(ões) em ${dur} s` : `✓ Sem colisões em ${dur} s`;
+    const count = collisions.length >= MAX_EVENTS ? `${MAX_EVENTS}+` : String(collisions.length);
+    badge.textContent = collisions.length ? `⚠ ${count} colisão(ões) em ${days}` : `✓ Sem colisões em ${days}`;
     badge.classList.toggle('badge-red', collisions.length > 0);
     badge.classList.toggle('badge-saved', !collisions.length);
     if (!collisions.length) { emptyRow(tb, 5, ac().agvs.length > 1 ? 'Nenhuma colisão no horizonte analisado.' : 'Coloque pelo menos dois AGVs para analisar colisões.'); return; }
     collisions.forEach(c => {
       const A = agv(c.a), B = agv(c.b);
-      cellRow(tb, [`${A ? A.name : '?'} × ${B ? B.name : '?'}`, `${fmt(c.t0, 1)} s`, `${fmt(c.t1 - c.t0 + SIM_DT, 1)} s`, `x ${fmt(c.x, 1)} m · y ${fmt(c.y, 1)} m`, '▶ ver'],
+      cellRow(tb, [`${A ? A.name : '?'} × ${B ? B.name : '?'}`, fmtTime(c.t0), `${fmt(c.t1 - c.t0 + SIM_DT, 1)} s`, `x ${fmt(c.x, 1)} m · y ${fmt(c.y, 1)} m`, '▶ ver'],
         () => {
           setPlaying(false);
           setTime(c.t0);
@@ -5998,8 +6063,8 @@ const AgvFlow = (() => {
   }
 
   function render() {
-    $('agvDuration').value = String(ac().duration);
-    $('agvScrubber').max = String(ac().duration);
+    $('agvDuration').value = String(ac().days);
+    $('agvScrubber').max = String(horizonS());
     if (routeEdit !== null && !trilho(routeEdit)) routeEdit = null;
     geomCache = new Map();
     setTool(routeEdit !== null ? 'route' : (tool === 'route' ? 'select' : tool));
@@ -6025,10 +6090,10 @@ const AgvFlow = (() => {
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     $('agvScrubber').addEventListener('input', e => { setPlaying(false); setTime(parseFloat(e.target.value)); });
     $('agvDuration').addEventListener('change', e => {
-      const v = Math.min(7200, Math.max(10, parseFloat(e.target.value) || 300));
-      ac().duration = v;
+      const v = Math.min(60, Math.max(1, Math.round(parseFloat(e.target.value) || 1)));
+      ac().days = v;
       e.target.value = String(v);
-      $('agvScrubber').max = String(v);
+      $('agvScrubber').max = String(horizonS());
       scheduleAnalysis();
       saveToLocalMemory();
     });
@@ -6248,7 +6313,7 @@ function mergeAgvConfig(t, c) {
   if (c.view && typeof c.view === 'object') {
     t.view = { cx: num(c.view.cx, 0), cy: num(c.view.cy, 0), zoom: Math.min(300, Math.max(0.3, num(c.view.zoom, 6))) };
   }
-  if (Number.isFinite(Number(c.duration))) t.duration = Math.min(7200, Math.max(10, Number(c.duration)));
+  if (Number.isFinite(Number(c.days))) t.days = Math.min(60, Math.max(1, Math.round(Number(c.days))));
   const maxId = Math.max(0, ...[t.nodes, t.trechos, t.trilhos, t.agvs].flatMap(list => list.map(o => o.id)));
   t.nextId = Math.max(num(c.nextId, 1), maxId + 1);
   AgvModel.repair(t, legacyLens);

@@ -1092,7 +1092,7 @@ async function agvCheck(browser) {
   net = await cfgNow();
   const square = net.trechos.slice(2, 6).every(t => Math.abs(t.pts[0][0] - t.pts[1][0]) < 1e-6 || Math.abs(t.pts[0][1] - t.pts[1][1]) < 1e-6);
   expect(square, 'o circuito deveria continuar com lados retos (retângulo)');
-  await page.waitForFunction(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => !document.getElementById('agvCollisionBadge').textContent.startsWith('Analisando') && document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 15000 }).catch(() => {});
   const nCol = await page.evaluate(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length);
   expect(nCol >= 1, `AGVs em sentidos opostos no circuito devem colidir: ${nCol}`);
 
@@ -1126,7 +1126,7 @@ async function agvCheck(browser) {
 
   await page.reload();
   await page.selectOption('#appViewSelect', 'agv');
-  await page.waitForFunction(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => !document.getElementById('agvCollisionBadge').textContent.startsWith('Analisando') && document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 15000 }).catch(() => {});
   expect(await page.evaluate(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length) === nCol, 'colisões após recarregar');
   expect(JSON.stringify(await trilhos()) === JSON.stringify(tl), `após recarregar: ${await trilhos()}`);
   expect(!errors.length, `erros: ${errors.join('; ')}`);

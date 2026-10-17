@@ -125,8 +125,12 @@ móvel (arrastar o fundo ou ✋ Vista). **O desenho é sempre em escala.**
   ferramenta volta para Selecionar (Shift+clique coloca vários). Clicando nele: velocidade (m/min), sentido (no sentido
   do trilho ou contra), posição inicial, partida (s) e comportamento no fim do trilho (para, vai e volta, recomeça).
   Gira acompanhando o trilho com o eixo no meio do AGV; ao editar a rede, continua no mesmo ponto do seu trecho.
-- **Colisões:** todos os AGVs são simulados no horizonte escolhido (passo de 0,1 s) e cada contato entre dois AGVs é
-  listado com instante, duração e local; clicar leva ao momento da colisão. ▶ Simular anima o fluxo.
+- **Fluxo contínuo:** ▶ Simular anima os AGVs sem reiniciar — cada um segue a sua regra (circuito, vai e volta ou para
+  no fim) indefinidamente. O tempo aparece como "Dia N · hh:mm:ss", com **dia de 18 h**; velocidades de 1x a 1800x.
+- **Relatório de colisões:** vale só para o **horizonte do relatório (em dias)**. Os AGVs são simulados nesse período
+  (passo de 0,1 s; cada par só é testado quando pode se encostar, então vários dias levam poucos segundos) e cada
+  contato entre dois AGVs é listado com dia/hora, duração e local; clicar leva ao momento da colisão. No desenho, um
+  AGV fica vermelho sempre que encosta em outro, mesmo depois do horizonte.
 - ↶ Desfazer / Ctrl+Z, Delete apaga o selecionado, Esc cancela. Tudo fica salvo no PC e no `.json` (`agvCfg`).
 
 No código, `AgvModel` é a rede (nós, trechos, trilhos e as operações de edição, sem DOM) e `AgvFlow` a página.
