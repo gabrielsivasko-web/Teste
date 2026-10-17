@@ -714,8 +714,9 @@
       <button class="btn" data-action="agvTool" data-arg="line" title="Linha reta: clique e arraste (Shift = ângulos de 15°)">／ Linha</button>
       <button class="btn" data-action="agvTool" data-arg="curve" title="Curva: arraste do início ao fim, solte, mova o mouse para curvar e clique">⌒ Curva</button>
       <button class="btn" data-action="agvTool" data-arg="pencil" title="Lápis: desenho à mão livre, suavizado ao soltar">✎ Lápis</button>
+      <button class="btn" data-action="agvTool" data-arg="move" title="Mover pontas (e ligar uma ponta em outra ou num trecho) e mover trilhos inteiros">✥ Mover trilho</button>
       <button class="btn" data-action="agvTool" data-arg="agv" title="AGV 0,80 × 1,50 m: clique sobre um trilho">▭ AGV</button>
-      <button class="btn" data-action="agvTool" data-arg="pan" title="Mover a vista">✋ Mover</button>
+      <button class="btn" data-action="agvTool" data-arg="pan" title="Mover a vista">✋ Vista</button>
     </div>
   </div>
   <div class="row-between mt-10">
@@ -754,10 +755,13 @@
   <input type="range" id="agvScrubber" min="0" max="300" step="0.1" value="0">
   <div class="agv-tables">
     <div>
-      <div class="section-label">🎨 Trilhos (cor = AGVs ligados a ele)</div>
+      <div class="row-between">
+        <div class="section-label">🎨 Trilhos (cor = AGVs ligados a ele)</div>
+        <button class="btn" data-action="agvNewTrilho" title="Cria um trilho e escolhe, clicando, os trechos por onde ele passa">➕ Novo trilho</button>
+      </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Cor</th><th>Nome</th><th>Trechos</th><th>Comprimento real</th><th>Tipo</th><th>AGVs</th><th></th></tr></thead>
+          <thead><tr><th>Cor</th><th>Nome</th><th>Trechos</th><th>Comprimento</th><th>Tipo</th><th>AGVs</th><th></th></tr></thead>
           <tbody id="agvTrilhoBody"></tbody>
         </table>
       </div>
@@ -999,8 +1003,9 @@ function createDefaultConfig() {
       // Planilha importada: { fileName, importedAt, passes: { n: { sheet, columns: [...], rows: [[...]] } } }
       sheet: null
     },
-    // Página Fluxo de AGVs (ver AgvFlow): trechos desenhados, trilhos, AGVs, vista e horizonte da análise (s)
+    // Página Fluxo de AGVs (ver AgvModel): nós, trechos desenhados, trilhos, AGVs, vista e horizonte da análise (s)
     agvCfg: {
+      nodes: [],
       trilhos: [],
       trechos: [],
       agvs: [],
@@ -3701,7 +3706,7 @@ function sheetsToPasses(sheets) {
 const VIEW_SUBTITLES = {
   telemetria: 'Simulação de Fluxo, Trechos Dinâmicos, Passes de Operação, Plataforma e Servant Sincronizada',
   engajamento: 'Posicionamento dos Postos de Trabalho por Passe — Carro Estático, Vista de Cima',
-  agv: 'Trilhos, Trechos com Comprimento Real, AGVs e Análise de Colisões'
+  agv: 'Trilhos em Escala, Desvios, AGVs e Análise de Colisões'
 };
 
 function setView(view) {
@@ -4422,32 +4427,514 @@ const Engagement = (() => {
 })();
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * 11. PÁGINA FLUXO DE AGVs (trilhos desenhados, trechos com comprimento real, AGVs e colisões)
+ * 11. PÁGINA FLUXO DE AGVs (rede de trilhos em escala, desvios, AGVs e colisões)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Modelo (config.agvCfg), em metros, eixo y para baixo (como a tela):
- *  - trecho: { id, kind: 'line' | 'curve' | 'path', pts: [[x, y], …], realLen: m | null }
+ * Modelo (config.agvCfg), em metros, eixo y para baixo (como a tela). O desenho é sempre em escala.
+ *  - nó:     { id, x, y } — ponta de trecho; ligações e desvios são nós com mais de um trecho
+ *  - trecho: { id, kind: 'line' | 'curve' | 'path', pts: [[x, y], …], a, b (nós das pontas), len: m definidos | null }
  *      line = 2 pontos; curve = [início, controle, fim] (Bézier quadrática); path = pontos do lápis (Catmull-Rom)
- *  - trilho: { id, name, color, trechos: [ids na ordem de percurso], closed }
- *  - agv:    { id, name, trilhoId | null, s0 (m reais desde o início do trilho), speed (m/min), dir (+1 direita / −1 esquerda),
- *              endMode: 'stop' | 'pingpong' | 'loop', delay (s), orient: 'trans' (atravessado) | 'long', x, y, angle (se solto) }
+ *  - trilho: { id, name, color, trechos: [ids na ordem de percurso], rev } — o caminho que os AGVs seguem. Trilhos
+ *            podem dividir trechos (desvios, ligações); o sentido de cada trecho e o circuito fechado saem do
+ *            encadeamento (rev = percorre ao contrário um trilho de um trecho só).
+ *  - agv:    { id, name, trilhoId | null, s0 (m desde o início do trilho), speed (m/min), dir (+1 no sentido do trilho,
+ *              −1 contra), endMode: 'stop' | 'pingpong' | 'loop', delay (s), x, y, angle (se solto) }
  */
-const AgvFlow = (() => {
-  const AGV_LONG = 1.5, AGV_SHORT = 0.8;       // dimensões do AGV (m)
-  const GRID = 10;                              // grade principal: 10 m por quadrado
-  const SNAP_PX = 12;                           // raio de emenda nas pontas dos trilhos (px)
-  const PICK_PX = 9;                            // tolerância para clicar num trecho (px)
-  const SIM_DT = 0.1;                           // passo da análise de colisões (s)
+const AgvModel = (() => {
+  const JOIN_TOL = 1e-3;   // pontas a menos disto (m) são o mesmo nó (arquivos sem nós)
   const PALETTE = ['#38bdf8', '#f59e0b', '#10b981', '#f472b6', '#a78bfa', '#facc15', '#fb923c', '#22d3ee', '#a3e635', '#f87171', '#e879f9', '#60a5fa'];
+
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const polyLen = pts => pts.reduce((acc, p, i) => (i ? acc + dist(pts[i - 1], p) : 0), 0);
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const byId = (list, id) => list.find(o => o.id === id) || null;
+
+  /* ── Trechos ──────────────────────────────────────────────────────────── */
+
+  /** Pontos que descrevem o trecho (polilinha fina, para medir, desenhar e percorrer). */
+  function samples(tr) {
+    const p = tr.pts;
+    if (tr.kind === 'line') return [p[0], p[p.length - 1]];
+    if (tr.kind === 'curve') {
+      const n = Math.min(400, Math.max(16, Math.ceil((dist(p[0], p[1]) + dist(p[1], p[2])) / 0.25)));
+      const out = [];
+      for (let i = 0; i <= n; i++) {
+        const t = i / n, u = 1 - t;
+        out.push([u * u * p[0][0] + 2 * u * t * p[1][0] + t * t * p[2][0], u * u * p[0][1] + 2 * u * t * p[1][1] + t * t * p[2][1]]);
+      }
+      return out;
+    }
+    // path: Catmull-Rom pelos pontos do traço
+    if (p.length < 3) return p.slice();
+    const out = [p[0]];
+    for (let i = 0; i < p.length - 1; i++) {
+      const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p[i + 1];
+      const steps = Math.min(40, Math.max(4, Math.ceil(dist(p1, p2) / 0.25)));
+      for (let k = 1; k <= steps; k++) {
+        const t = k / steps, t2 = t * t, t3 = t2 * t;
+        out.push([0, 1].map(j => 0.5 * ((2 * p1[j]) + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
+      }
+    }
+    return out;
+  }
+
+  const trechoLen = tr => polyLen(samples(tr));
+
+  /** Simplificação de polilinha (Ramer–Douglas–Peucker) com tolerância eps (m). */
+  function simplify(pts, eps) {
+    if (pts.length < 3) return pts;
+    const [a, b] = [pts[0], pts[pts.length - 1]];
+    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+    let idx = 0, maxD = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const d = Math.abs(dy * pts[i][0] - dx * pts[i][1] + b[0] * a[1] - b[1] * a[0]) / l;
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD <= eps) return [a, b];
+    return [...simplify(pts.slice(0, idx + 1), eps).slice(0, -1), ...simplify(pts.slice(idx), eps)];
+  }
+  const lenMismatch = tr => !!tr.len && Math.abs(trechoLen(tr) - tr.len) > 0.01;
+
+  /** Ponto no meio (em comprimento) da polilinha. */
+  function midPoint(pts) {
+    let left = polyLen(pts) / 2;
+    for (let i = 1; i < pts.length; i++) {
+      const l = dist(pts[i - 1], pts[i]);
+      if (l >= left) return lerp(pts[i - 1], pts[i], l ? left / l : 0);
+      left -= l;
+    }
+    return pts[0];
+  }
+
+  /** Ponto da polilinha mais próximo de (x, y): { i (fim do segmento), f, g (distância desde o início), dist, x, y }. */
+  function nearestOnPoly(pts, x, y) {
+    let best = null, acc = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+      const dx = bx - ax, dy = by - ay, l = Math.hypot(dx, dy);
+      const f = Math.min(1, Math.max(0, ((x - ax) * dx + (y - ay) * dy) / (l * l || 1)));
+      const px = ax + dx * f, py = ay + dy * f, d = Math.hypot(x - px, y - py);
+      if (!best || d < best.dist) best = { i, f, g: acc + l * f, dist: d, x: px, y: py };
+      acc += l;
+    }
+    return best;
+  }
+
+  /* ── Nós ──────────────────────────────────────────────────────────────── */
+
+  const node = (m, id) => byId(m.nodes, id);
+  const nodePt = (m, id) => { const n = node(m, id); return [n.x, n.y]; };
+  const degree = (m, id) => m.trechos.reduce((k, t) => k + (t.a === id) + (t.b === id), 0);
+
+  function addNode(m, p) {
+    const n = { id: m.nextId++, x: p[0], y: p[1] };
+    m.nodes.push(n);
+    return n.id;
+  }
+
+  /** As pontas do desenho do trecho coincidem exatamente com os seus nós. */
+  function snapEnds(m, tr) {
+    tr.pts[0] = nodePt(m, tr.a);
+    tr.pts[tr.pts.length - 1] = nodePt(m, tr.b);
+  }
+
+  function removeOrphanNodes(m) {
+    const used = new Set();
+    m.trechos.forEach(t => { used.add(t.a); used.add(t.b); });
+    m.nodes = m.nodes.filter(n => used.has(n.id));
+  }
+
+  function nearestNode(m, p, tol, exclude = null) {
+    let best = null;
+    m.nodes.forEach(n => {
+      const d = Math.hypot(n.x - p[0], n.y - p[1]);
+      if (n.id !== exclude && d <= tol && (!best || d < best.d)) best = { id: n.id, p: [n.x, n.y], d };
+    });
+    return best;
+  }
+
+  /** Ponto mais próximo sobre algum trecho (ignorando os ligados ao nó `exclude`). */
+  function nearestTrecho(m, p, tol, exclude = null) {
+    let best = null;
+    m.trechos.forEach(tr => {
+      if (exclude !== null && (tr.a === exclude || tr.b === exclude)) return;
+      const n = nearestOnPoly(samples(tr), p[0], p[1]);
+      if (n && n.dist <= tol && (!best || n.dist < best.d)) best = { id: tr.id, p: [n.x, n.y], d: n.dist };
+    });
+    return best;
+  }
+
+  /** Nós ligados (direta ou indiretamente) a `id`. */
+  function component(m, id) {
+    const seen = new Set([id]), queue = [id];
+    while (queue.length) {
+      const u = queue.shift();
+      m.trechos.forEach(t => {
+        const v = t.a === u ? t.b : (t.b === u ? t.a : null);
+        if (v !== null && !seen.has(v)) { seen.add(v); queue.push(v); }
+      });
+    }
+    return seen;
+  }
+
+  /** Desloca as pontas do trecho (da na ponta a, db na ponta b) e distribui o deslocamento pelos pontos do meio. */
+  function deform(tr, da, db) {
+    const p = tr.pts, cum = [0];
+    for (let i = 1; i < p.length; i++) cum.push(cum[i - 1] + dist(p[i - 1], p[i]));
+    const L = cum[cum.length - 1];
+    tr.pts = p.map((q, i) => {
+      const u = L > 1e-9 ? cum[i] / L : i / (p.length - 1);
+      return [q[0] + da[0] * (1 - u) + db[0] * u, q[1] + da[1] * (1 - u) + db[1] * u];
+    });
+  }
+
+  /** Move nós (Map id → [dx, dy]); os trechos ligados acompanham (inteiros, se as duas pontas andam juntas). */
+  function moveNodes(m, deltas, skipId = null) {
+    m.nodes.forEach(n => { const d = deltas.get(n.id); if (d) { n.x += d[0]; n.y += d[1]; } });
+    m.trechos.forEach(tr => {
+      const da = deltas.get(tr.a), db = deltas.get(tr.b);
+      if (tr.id === skipId || (!da && !db)) return;
+      deform(tr, da || [0, 0], db || [0, 0]);
+      snapEnds(m, tr);
+    });
+  }
+
+  /* ── Trilhos (caminhos) ───────────────────────────────────────────────── */
+
+  /**
+   * Percurso do trilho: trechos com o sentido de cada um, nós de início e fim e se fecha um circuito. Com dois ou
+   * mais trechos o sentido sai do encadeamento; com um só, do `rev` do trilho.
+   */
+  function route(m, tl) {
+    const list = tl.trechos.map(id => byId(m.trechos, id)).filter(Boolean);
+    if (!list.length) return { steps: [], start: null, end: null, closed: false };
+    const first = list[0];
+    const rev = list.length > 1 ? !(first.b === list[1].a || first.b === list[1].b) : !!tl.rev;
+    const start = rev ? first.b : first.a;
+    let cur = rev ? first.a : first.b;
+    const steps = [{ tr: first, rev }];
+    for (let i = 1; i < list.length; i++) {
+      const t = list[i];
+      if (t.a !== cur && t.b !== cur) break;   // quebra no encadeamento (normalizeRoutes separa)
+      const r = t.a !== cur;
+      steps.push({ tr: t, rev: r });
+      cur = r ? t.a : t.b;
+    }
+    const closed = steps.length === list.length && cur === start && (list.length > 1 || first.a === first.b);
+    return { steps, start, end: cur, closed };
+  }
+
+  /** Polilinha contínua do trilho, com a posição de cada trecho nela (para os AGVs e as setas). */
+  function trilhoGeom(m, tl) {
+    const r = route(m, tl);
+    const pts = [], cum = [], segs = [];
+    let len = 0;
+    r.steps.forEach(({ tr, rev }) => {
+      const s = rev ? samples(tr).slice().reverse() : samples(tr);
+      const g0 = len;
+      s.forEach((p, i) => {
+        if (pts.length && i === 0) return;   // ponto de ligação já incluído
+        if (pts.length) len += dist(pts[pts.length - 1], p);
+        pts.push(p);
+        cum.push(len);
+      });
+      segs.push({ id: tr.id, rev, g0, len: len - g0 });
+    });
+    return { pts, cum, segs, len, closed: r.closed && pts.length > 2, start: r.start, end: r.end };
+  }
+
+  function nextColor(m) {
+    const used = new Set(m.trilhos.map(t => t.color));
+    return PALETTE.find(c => !used.has(c)) || PALETTE[m.trilhos.length % PALETTE.length];
+  }
+
+  function nextName(m) {
+    const names = new Set(m.trilhos.map(t => t.name));
+    let k = m.trilhos.length + 1;
+    while (names.has(`Trilho ${k}`)) k++;
+    return `Trilho ${k}`;
+  }
+
+  function newTrilho(m, trechos = []) {
+    const tl = { id: m.nextId++, name: nextName(m), color: nextColor(m), trechos, rev: false };
+    m.trilhos.push(tl);
+    return tl;
+  }
+
+  /** Separa trilhos com o encadeamento quebrado (a 2ª parte em diante vira trilho novo) e tira os vazios. */
+  function normalizeRoutes(m, keepEmptyId = null) {
+    const ids = new Set(m.trechos.map(t => t.id));
+    const out = [];
+    m.trilhos.slice().forEach(tl => {
+      let rest = tl.trechos.filter((id, i, arr) => ids.has(id) && arr.indexOf(id) === i);
+      const pieces = [];
+      while (rest.length) {
+        const n = route(m, { trechos: rest }).steps.length;
+        pieces.push(rest.slice(0, n));
+        rest = rest.slice(n);
+      }
+      tl.trechos = pieces[0] || [];
+      if (tl.trechos.length || tl.id === keepEmptyId) out.push(tl);
+      pieces.slice(1).forEach((trechos, k) => {
+        out.push({ id: m.nextId++, name: `${tl.name} (parte ${k + 2})`, color: nextColor({ trilhos: [...m.trilhos, ...out] }), trechos, rev: false });
+      });
+    });
+    m.trilhos = out;
+  }
+
+  /** Une dois trilhos abertos que terminam no mesmo nó quando só eles chegam ali (fica o mais antigo). */
+  function joinRoutesAt(m, nid) {
+    if (degree(m, nid) !== 2) return;
+    const ends = m.trilhos.map(tl => ({ tl, r: route(m, tl) }))
+      .filter(({ r }) => r.steps.length && !r.closed && (r.start === nid || r.end === nid));
+    if (ends.length !== 2) return;
+    const [A, B] = ends;
+    const aIds = A.r.end === nid ? A.tl.trechos : A.tl.trechos.slice().reverse();
+    const bIds = B.r.start === nid ? B.tl.trechos : B.tl.trechos.slice().reverse();
+    if (aIds[aIds.length - 1] === bIds[0]) return;
+    A.tl.trechos = [...aIds, ...bIds];
+    m.trilhos = m.trilhos.filter(t => t !== B.tl);
+  }
+
+  /** Divide o trecho no ponto mais próximo de p e devolve o nó da divisão (ou o da ponta, se cair perto dela). */
+  function splitAt(m, tr, p, minEnd) {
+    const s = samples(tr);
+    const n = nearestOnPoly(s, p[0], p[1]);
+    const L = polyLen(s);
+    if (n.g <= minEnd) return tr.a;
+    if (L - n.g <= minEnd) return tr.b;
+    const revIn = new Map();
+    m.trilhos.forEach(tl => {
+      if (!tl.trechos.includes(tr.id)) return;
+      const st = route(m, tl).steps.find(x => x.tr === tr);
+      revIn.set(tl.id, !!(st && st.rev));
+    });
+    let P, pa, pb;
+    if (tr.kind === 'curve') {
+      const t = (n.i - 1 + n.f) / (s.length - 1);
+      const [p0, p1, p2] = tr.pts, q0 = lerp(p0, p1, t), q1 = lerp(p1, p2, t);
+      P = lerp(q0, q1, t);
+      pa = [p0, q0, P];
+      pb = [P, q1, p2];
+    } else if (tr.kind === 'path') {
+      // as partes passam pelos pontos do traço já suavizado: o desenho (e o comprimento) não muda
+      P = [n.x, n.y];
+      pa = simplify([...s.slice(0, n.i), P], 0.01);
+      pb = simplify([P, ...s.slice(n.i)], 0.01);
+    } else {
+      P = [n.x, n.y];
+      pa = [tr.pts[0], P];
+      pb = [P, tr.pts[1]];
+    }
+    const nid = addNode(m, P);
+    const piece = (pts, a, b) => {
+      const t = { id: m.nextId++, kind: tr.kind === 'path' && pts.length === 2 ? 'line' : tr.kind, pts: pts.map(q => [q[0], q[1]]), a, b, len: null };
+      if (tr.len) t.len = trechoLen(t);   // comprimento definido continua valendo nas duas partes
+      return t;
+    };
+    const t1 = piece(pa, tr.a, nid), t2 = piece(pb, nid, tr.b);
+    m.trechos.splice(m.trechos.indexOf(tr), 1, t1, t2);
+    m.trilhos.forEach(tl => {
+      if (!revIn.has(tl.id)) return;
+      tl.trechos = tl.trechos.flatMap(id => (id === tr.id ? (revIn.get(tl.id) ? [t2.id, t1.id] : [t1.id, t2.id]) : [id]));
+    });
+    return nid;
+  }
+
+  /* ── Edição da rede ───────────────────────────────────────────────────── */
+
+  /**
+   * Grava um traço como trecho. Cada ponta liga num nó próximo, no meio de um trecho (cria um desvio) ou fica solta.
+   * O traço continua o trilho que terminava ali; se ligar as pontas de dois trilhos, eles viram um só.
+   * @returns {{ tr, desvio: boolean } | null} null se o traço não forma um trecho (linha com as duas pontas no mesmo nó)
+   */
+  function commitStroke(m, kind, pts, tol) {
+    const ns = nearestNode(m, pts[0], tol), ne = nearestNode(m, pts[pts.length - 1], tol);
+    if (kind === 'line' && ns && ne && ns.id === ne.id) return null;
+    let desvio = false;
+    const endNode = p => {
+      const nd = nearestNode(m, p, tol);
+      if (nd) return nd.id;
+      const nt = nearestTrecho(m, p, tol);
+      if (nt) { desvio = true; return splitAt(m, byId(m.trechos, nt.id), nt.p, tol); }
+      return addNode(m, p);
+    };
+    const a = endNode(pts[0]);
+    const b = endNode(pts[pts.length - 1]);
+    const tr = { id: m.nextId++, kind, pts: pts.map(q => [q[0], q[1]]), a, b, len: null };
+    m.trechos.push(tr);
+    snapEnds(m, tr);
+    desvio = desvio || degree(m, a) > 2 || degree(m, b) > 2;
+    newTrilho(m, [tr.id]);
+    joinRoutesAt(m, a);
+    joinRoutesAt(m, b);
+    return { tr, desvio };
+  }
+
+  /**
+   * Nós que andam junto com `src` quando ele se desloca d, separados de `sink` pelo corte mais barato da rede
+   * (fluxo máximo / corte mínimo). Esticar um trecho custa menos se ele é reto, paralelo ao deslocamento e não tem
+   * comprimento definido — assim um retângulo continua retângulo.
+   */
+  function rigidSet(m, src, sink, skipId, d) {
+    const res = new Map();
+    const addCap = (u, v, c) => {
+      if (!res.has(u)) res.set(u, new Map());
+      res.get(u).set(v, (res.get(u).get(v) || 0) + c);
+    };
+    const dl = Math.hypot(d[0], d[1]) || 1;
+    m.trechos.forEach(t => {
+      if (t.id === skipId || t.a === t.b) return;
+      const A = nodePt(m, t.a), B = nodePt(m, t.b), cl = dist(A, B);
+      const sin = cl > 1e-9 ? Math.abs((B[0] - A[0]) * d[1] - (B[1] - A[1]) * d[0]) / (cl * dl) : 1;
+      const cost = t.len ? 1e6 : 1 + 4 * sin + (t.kind === 'line' ? 0 : 3);
+      addCap(t.a, t.b, cost);
+      addCap(t.b, t.a, cost);
+    });
+    let cost = 0;
+    for (;;) {
+      const prev = new Map([[src, null]]), queue = [src];
+      while (queue.length && !prev.has(sink)) {
+        const u = queue.shift();
+        (res.get(u) || new Map()).forEach((c, v) => { if (c > 1e-9 && !prev.has(v)) { prev.set(v, u); queue.push(v); } });
+      }
+      if (!prev.has(sink)) return { set: new Set(prev.keys()), cost };
+      let f = Infinity;
+      for (let v = sink; prev.get(v) !== null; v = prev.get(v)) f = Math.min(f, res.get(prev.get(v)).get(v));
+      for (let v = sink; prev.get(v) !== null; v = prev.get(v)) {
+        const u = prev.get(v);
+        res.get(u).set(v, res.get(u).get(v) - f);
+        addCap(v, u, f);
+      }
+      cost += f;
+    }
+  }
+
+  /**
+   * Define o comprimento do trecho redimensionando o desenho (escala a partir de uma das pontas). O que está ligado
+   * acompanha: o lado que se desloca anda inteiro e, num circuito, o trecho mais barato de esticar absorve a diferença.
+   */
+  function setLength(m, tr, L) {
+    const cur = trechoLen(tr);
+    if (!(L > 0) || cur < 1e-9) return;
+    tr.len = L;
+    const k = L / cur;
+    const options = tr.a === tr.b ? [[tr.a, tr.a]] : [[tr.a, tr.b], [tr.b, tr.a]];
+    const plans = options.map(([X, Mv]) => {
+      const pX = nodePt(m, X), pM = nodePt(m, Mv);
+      const d = [(pM[0] - pX[0]) * (k - 1), (pM[1] - pX[1]) * (k - 1)];
+      const cut = X === Mv || Math.hypot(d[0], d[1]) < 1e-12 ? { set: new Set(), cost: 0 } : rigidSet(m, Mv, X, tr.id, d);
+      return { pX, d, ...cut };
+    });
+    const best = plans.reduce((b, p) => (p.cost < b.cost - 1e-9 || (Math.abs(p.cost - b.cost) <= 1e-9 && p.set.size < b.set.size) ? p : b));
+    tr.pts = tr.pts.map(q => [best.pX[0] + (q[0] - best.pX[0]) * k, best.pX[1] + (q[1] - best.pX[1]) * k]);
+    moveNodes(m, new Map([...best.set].map(id => [id, best.d])), tr.id);
+    snapEnds(m, tr);
+  }
+
+  /** Liga o nó `from` no nó `into` (o primeiro deixa de existir). @returns {boolean} ligou */
+  function mergeNodes(m, from, into) {
+    if (from === into) return false;
+    if (m.trechos.some(t => t.kind === 'line' && ((t.a === from && t.b === into) || (t.a === into && t.b === from)))) return false;
+    const f = node(m, from), i = node(m, into);
+    moveNodes(m, new Map([[from, [i.x - f.x, i.y - f.y]]]));
+    m.trechos.forEach(t => { if (t.a === from) t.a = into; if (t.b === from) t.b = into; });
+    m.nodes = m.nodes.filter(n => n.id !== from);
+    joinRoutesAt(m, into);
+    return true;
+  }
+
+  function deleteTrecho(m, id) {
+    m.trilhos.forEach(tl => {
+      const i = tl.trechos.indexOf(id);
+      if (i < 0) return;
+      if (route(m, tl).closed) tl.trechos = [...tl.trechos.slice(i + 1), ...tl.trechos.slice(0, i)];   // circuito abre ali
+      else tl.trechos.splice(i, 1);
+    });
+    m.trechos = m.trechos.filter(t => t.id !== id);
+    normalizeRoutes(m);
+    removeOrphanNodes(m);
+  }
+
+  /** Exclui o trilho e os trechos que só ele usa (os divididos com outros trilhos ficam). */
+  function deleteTrilho(m, id) {
+    const tl = byId(m.trilhos, id);
+    if (!tl) return;
+    const shared = new Set(m.trilhos.filter(t => t !== tl).flatMap(t => t.trechos));
+    m.trechos = m.trechos.filter(t => !tl.trechos.includes(t.id) || shared.has(t.id));
+    m.trilhos = m.trilhos.filter(t => t !== tl);
+    normalizeRoutes(m);
+    removeOrphanNodes(m);
+  }
+
+  /** Trechos que podem entrar no caminho do trilho (encostam numa ponta dele). */
+  function routeCandidates(m, tl) {
+    const r = route(m, tl);
+    if (!r.steps.length) return m.trechos.map(t => t.id);
+    if (r.closed) return [];
+    return m.trechos.filter(t => !tl.trechos.includes(t.id) && [r.start, r.end].some(n => t.a === n || t.b === n)).map(t => t.id);
+  }
+
+  /** Montagem do caminho: acrescenta o trecho numa ponta do trilho ou tira o da ponta. @returns {string|null} motivo da recusa */
+  function toggleRouteTrecho(m, tl, trId) {
+    const ids = tl.trechos, tr = byId(m.trechos, trId);
+    if (!tr) return null;
+    if (!ids.length) { ids.push(trId); return null; }
+    if (ids[ids.length - 1] === trId) { ids.pop(); return null; }
+    if (ids[0] === trId) { ids.shift(); return null; }
+    if (ids.includes(trId)) return 'Só dá para tirar trechos das pontas do caminho';
+    const r = route(m, tl);
+    if (r.closed) return 'O caminho já é um circuito fechado — tire um trecho da ponta para mudar';
+    if (tr.a === r.end || tr.b === r.end) { ids.push(trId); return null; }
+    if (tr.a === r.start || tr.b === r.start) { ids.unshift(trId); return null; }
+    return 'Esse trecho não encosta nas pontas do caminho';
+  }
+
+  /** Completa uma rede carregada: nós das pontas (arquivos antigos não tinham), comprimentos antigos e trilhos. */
+  function repair(m, legacyLens = []) {
+    const ids = new Set(m.nodes.map(n => n.id));
+    m.trechos.forEach(tr => {
+      ['a', 'b'].forEach((k, i) => {
+        if (ids.has(tr[k])) return;
+        const p = i ? tr.pts[tr.pts.length - 1] : tr.pts[0];
+        const near = nearestNode(m, p, JOIN_TOL);
+        tr[k] = near ? near.id : addNode(m, p);
+        ids.add(tr[k]);
+      });
+      snapEnds(m, tr);
+    });
+    m.trechos = m.trechos.filter(tr => trechoLen(tr) > 1e-6);
+    legacyLens.forEach(([id, L]) => { const tr = byId(m.trechos, id); if (tr) setLength(m, tr, L); });
+    normalizeRoutes(m);
+    removeOrphanNodes(m);
+  }
+
+  return {
+    PALETTE, dist, polyLen, midPoint, simplify, samples, trechoLen, lenMismatch, nearestOnPoly, degree, component, nearestNode, nearestTrecho,
+    route, trilhoGeom, newTrilho, commitStroke, splitAt, setLength, moveNodes, mergeNodes, deleteTrecho, deleteTrilho,
+    routeCandidates, toggleRouteTrecho, repair
+  };
+})();
+
+const AgvFlow = (() => {
+  const AGV_LONG = 1.5, AGV_SHORT = 0.8;       // dimensões do AGV (m); fica comprido no trilho
+  const GRID = 10;                              // grade principal: 10 m por quadrado
+  const SNAP_PX = 12;                           // raio de ligação em nós e trechos (px)
+  const PICK_PX = 9;                            // tolerância para clicar num trecho (px)
+  const LANE_PX = 4;                            // afastamento entre as cores de trilhos que dividem um trecho (px)
+  const SIM_DT = 0.1;                           // passo da análise de colisões (s)
   const END_MODES = { stop: 'Para no fim', pingpong: 'Vai e volta', loop: 'Recomeça no início' };
+  const DIR_OPTIONS = [[1, '▶ No sentido do trilho'], [-1, '◀ Contra o sentido do trilho']];
+  const M = AgvModel;
 
   let canvas = null, ctx = null, W = 0, H = 0;
   let tool = 'select';
-  let sel = null;            // { kind: 'trecho' | 'agv', id }
+  let routeEdit = null;      // id do trilho cujo caminho está sendo montado
+  let sel = null;            // { kind: 'trecho' | 'trilho' | 'agv', id }
   let draft = null;          // traço em andamento
-  let drag = null;           // { kind: 'pan' | 'agv', … }
-  let hoverSnap = null;      // ponta de trilho sob o ponteiro (para emendar)
+  let drag = null;           // { kind: 'pan' | 'agv' | 'node' | 'group', … }
+  let hoverSnap = null;      // { kind: 'node' | 'trecho', id, p } onde o traço/ponta vai ligar
   let simTime = 0, playing = false, lastTs = 0, loopOn = false;
   let collisions = [];       // [{ a, b, t0, t1, x, y }]
   let geomCache = new Map(); // trilhoId → geometria
@@ -4461,13 +4948,21 @@ const AgvFlow = (() => {
   const trecho = id => byId(ac().trechos, id);
   const trilho = id => byId(ac().trilhos, id);
   const agv = id => byId(ac().agvs, id);
-  const newId = () => ac().nextId++;
+  const nodeOf = id => byId(ac().nodes, id);
+  const trilhosOf = trId => ac().trilhos.filter(tl => tl.trechos.includes(trId));
   const fmt = (v, d = 2) => Fmt.comma(v, d);
+  const { dist } = M;
+
+  function geom(tl) {
+    if (!geomCache.has(tl.id)) geomCache.set(tl.id, M.trilhoGeom(ac(), tl));
+    return geomCache.get(tl.id);
+  }
 
   /* ── Coordenadas e zoom ───────────────────────────────────────────────── */
 
   const toPx = (x, y) => [(x - view().cx) * view().zoom + W / 2, (y - view().cy) * view().zoom + H / 2];
   const toM = (px, py) => [(px - W / 2) / view().zoom + view().cx, (py - H / 2) / view().zoom + view().cy];
+  const tolM = () => SNAP_PX / view().zoom;
 
   function zoomAt(factor, px = W / 2, py = H / 2) {
     const [mx, my] = toM(px, py);
@@ -4492,121 +4987,39 @@ const AgvFlow = (() => {
     requestDraw();
   }
 
-  /* ── Geometria dos trechos e trilhos ──────────────────────────────────── */
+  /* ── Posição sobre os trilhos ─────────────────────────────────────────── */
 
-  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-  const polyLen = pts => pts.reduce((acc, p, i) => (i ? acc + dist(pts[i - 1], p) : 0), 0);
-
-  /** Pontos que descrevem o trecho (linha reta, curva de Bézier ou traço suavizado). */
-  function trechoSamples(tr) {
-    const p = tr.pts;
-    if (tr.kind === 'line') return [p[0], p[1]];
-    if (tr.kind === 'curve') {
-      const n = Math.min(400, Math.max(16, Math.ceil((dist(p[0], p[1]) + dist(p[0], p[2])) / 0.25)));
-      const out = [];
-      for (let i = 0; i <= n; i++) {
-        const t = i / n, u = 1 - t;
-        out.push([u * u * p[0][0] + 2 * u * t * p[1][0] + t * t * p[2][0], u * u * p[0][1] + 2 * u * t * p[1][1] + t * t * p[2][1]]);
-      }
-      return out;
-    }
-    // path: Catmull-Rom pelos pontos do traço
-    if (p.length < 3) return p.slice();
-    const out = [p[0]];
-    for (let i = 0; i < p.length - 1; i++) {
-      const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p[i + 1];
-      const steps = Math.min(40, Math.max(4, Math.ceil(dist(p1, p2) / 0.25)));
-      for (let k = 1; k <= steps; k++) {
-        const t = k / steps, t2 = t * t, t3 = t2 * t;
-        out.push([0, 1].map(j => 0.5 * ((2 * p1[j]) + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
-      }
-    }
-    return out;
-  }
-
-  const trechoGeoLen = tr => polyLen(trechoSamples(tr));
-  const trechoRealLen = tr => (Number.isFinite(tr.realLen) && tr.realLen > 0 ? tr.realLen : trechoGeoLen(tr));
-
-  /**
-   * Geometria do trilho: polilinha contínua + tabelas de comprimento desenhado (geo) e real por trecho.
-   * O comprimento real só muda o TEMPO de percurso; a posição desenhada (e as colisões) seguem o desenho.
-   */
-  function trilhoGeom(tl) {
-    if (geomCache.has(tl.id)) return geomCache.get(tl.id);
-    const pts = [], cum = [], segs = [];
-    let geo = 0, real = 0;
-    tl.trechos.map(trecho).filter(Boolean).forEach(tr => {
-      const s = trechoSamples(tr);
-      const g0 = geo;
-      s.forEach((p, i) => {
-        if (pts.length && i === 0) return;   // ponto de emenda já incluído
-        if (pts.length) geo += dist(pts[pts.length - 1], p);
-        pts.push(p);
-        cum.push(geo);
-      });
-      const r = trechoRealLen(tr);
-      segs.push({ id: tr.id, geo0: g0, geoLen: geo - g0, real0: real, realLen: r });
-      real += r;
-    });
-    const g = { pts, cum, segs, geoLen: geo, realLen: real, closed: !!tl.closed && pts.length > 2 };
-    geomCache.set(tl.id, g);
-    return g;
-  }
-
-  const invalidate = () => { geomCache = new Map(); scheduleAnalysis(); };
-
-  function pointAtGeo(gm, g) {
+  function pointAt(gm, g) {
     const { pts, cum } = gm;
     if (pts.length < 2) return pts[0] ? [pts[0][0], pts[0][1]] : [0, 0];
-    g = Math.min(gm.geoLen, Math.max(0, g));
+    g = Math.min(gm.len, Math.max(0, g));
     let lo = 0, hi = cum.length - 1;
     while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= g) lo = mid; else hi = mid; }
-    const seg = cum[hi] - cum[lo] || 1;
-    const f = (g - cum[lo]) / seg;
+    const f = (g - cum[lo]) / (cum[hi] - cum[lo] || 1);
     return [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * f, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * f];
   }
 
-  function realToGeo(gm, d) {
-    const s = gm.segs.find((sg, i) => d < sg.real0 + sg.realLen || i === gm.segs.length - 1);
-    if (!s) return 0;
-    return s.geo0 + Math.min(1, Math.max(0, (d - s.real0) / (s.realLen || 1))) * s.geoLen;
-  }
+  const segAt = (gm, g) => gm.segs.find((s, i) => g <= s.g0 + s.len || i === gm.segs.length - 1);
 
-  function geoToReal(gm, g) {
-    const s = gm.segs.find((sg, i) => g < sg.geo0 + sg.geoLen || i === gm.segs.length - 1);
-    if (!s) return 0;
-    return s.real0 + Math.min(1, Math.max(0, (g - s.geo0) / (s.geoLen || 1))) * s.realLen;
-  }
-
-  /** Ponto do trilho mais próximo de (x, y): { g, dist, x, y }. */
-  function nearestOnTrilho(gm, x, y) {
-    let best = null;
-    for (let i = 1; i < gm.pts.length; i++) {
-      const [ax, ay] = gm.pts[i - 1], [bx, by] = gm.pts[i];
-      const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
-      const f = Math.min(1, Math.max(0, ((x - ax) * dx + (y - ay) * dy) / l2));
-      const px = ax + dx * f, py = ay + dy * f, dd = Math.hypot(x - px, y - py);
-      if (!best || dd < best.dist) best = { g: gm.cum[i - 1] + (gm.cum[i] - gm.cum[i - 1]) * f, dist: dd, x: px, y: py };
-    }
-    return best;
-  }
-
-  function nearestTrilho(x, y, maxM) {
+  /** Trilho mais perto de (x, y) dentro de maxM; em empate (trecho dividido) fica o `preferId`. */
+  function nearestTrilho(x, y, maxM, preferId = null) {
     let best = null;
     ac().trilhos.forEach(tl => {
-      const gm = trilhoGeom(tl);
+      const gm = geom(tl);
       if (gm.pts.length < 2) return;
-      const n = nearestOnTrilho(gm, x, y);
-      if (n && n.dist <= maxM && (!best || n.dist < best.n.dist)) best = { tl, gm, n };
+      const n = M.nearestOnPoly(gm.pts, x, y);
+      if (!n || n.dist > maxM) return;
+      const better = !best || n.dist < best.n.dist - 1e-6 || (Math.abs(n.dist - best.n.dist) <= 1e-6 && tl.id === preferId);
+      if (better) best = { tl, gm, n };
     });
     return best;
   }
 
   /* ── Movimento dos AGVs ───────────────────────────────────────────────── */
 
-  /** Distância real percorrida no trilho no instante t (já com partida, sentido e regra de fim). */
+  /** Distância percorrida no trilho no instante t (já com partida, sentido e regra de fim). */
   function distanceAt(a, gm, t) {
-    const L = gm.realLen;
+    const L = gm.len;
     if (L <= 0) return 0;
     const run = Math.max(0, t - (a.delay || 0));
     let d = a.s0 + a.dir * (a.speed / 60) * run;
@@ -4618,35 +5031,29 @@ const AgvFlow = (() => {
     return d;
   }
 
-  const halfAlong = a => (a.orient === 'long' ? AGV_LONG : AGV_SHORT) / 2;   // meia medida do AGV no sentido do trilho
-
   /**
    * Pose do AGV: centro (eixo de rotação no MEIO) sobre o trilho; a direção é a da corda entre os pontos do trilho
-   * meia-medida à frente e atrás (corpo rígido, como a plataforma da Telemetria).
+   * meio AGV à frente e atrás (corpo rígido, como a plataforma da Telemetria).
    */
   function poseAt(a, t) {
     const tl = a.trilhoId != null ? trilho(a.trilhoId) : null;
-    const gm = tl ? trilhoGeom(tl) : null;
+    const gm = tl ? geom(tl) : null;
     if (!gm || gm.pts.length < 2) return { x: a.x || 0, y: a.y || 0, ang: a.angle || 0, move: 0, onTrack: false };
     const d = distanceAt(a, gm, t);
-    const g = realToGeo(gm, d);
-    const h = halfAlong(a);
-    const wrap = v => (gm.closed ? ((v % gm.geoLen) + gm.geoLen) % gm.geoLen : v);
-    const [x, y] = pointAtGeo(gm, g);
-    const f = pointAtGeo(gm, wrap(g + h)), r = pointAtGeo(gm, wrap(g - h));
+    const h = AGV_LONG / 2;
+    const wrap = v => (gm.closed ? ((v % gm.len) + gm.len) % gm.len : v);
+    const [x, y] = pointAt(gm, d);
+    const f = pointAt(gm, wrap(d + h)), r = pointAt(gm, wrap(d - h));
     const ang = Math.atan2(f[1] - r[1], f[0] - r[0]);
     const dNext = distanceAt(a, gm, t + 0.05);
     let move = Math.sign(dNext - d);
-    if (gm.closed && Math.abs(dNext - d) > gm.realLen / 2) move = -move;   // virada do circuito
+    if (gm.closed && Math.abs(dNext - d) > gm.len / 2) move = -move;   // virada do circuito
     const running = t >= (a.delay || 0) && move !== 0;
     return { x, y, ang, move: running ? move : 0, onTrack: true };
   }
 
-  /** Retângulo do AGV: eixo u = sentido do trilho. */
-  function boxOf(a, p) {
-    const hu = halfAlong(a), hv = (a.orient === 'long' ? AGV_SHORT : AGV_LONG) / 2;
-    return { x: p.x, y: p.y, ux: Math.cos(p.ang), uy: Math.sin(p.ang), hu, hv };
-  }
+  /** Retângulo do AGV: eixo u = sentido do trilho (comprimento de 1,50 m). */
+  const boxOf = (a, p) => ({ x: p.x, y: p.y, ux: Math.cos(p.ang), uy: Math.sin(p.ang), hu: AGV_LONG / 2, hv: AGV_SHORT / 2 });
 
   /** Teste de sobreposição de dois retângulos girados (eixos separadores). */
   function boxesOverlap(A, B) {
@@ -4698,7 +5105,7 @@ const AgvFlow = (() => {
     return set;
   };
 
-  /* ── Edição (trechos, trilhos, AGVs) ──────────────────────────────────── */
+  /* ── Edição com desfazer ──────────────────────────────────────────────── */
 
   function pushUndo() {
     const snap = { ...ac() };
@@ -4711,143 +5118,171 @@ const AgvFlow = (() => {
     const snap = undoStack.pop();
     if (!snap) { showMemToast('Nada para desfazer', true); return; }
     Object.assign(ac(), JSON.parse(snap));
-    sel = null;
+    if (routeEdit !== null && !trilho(routeEdit)) { routeEdit = null; tool = 'select'; }
     changed();
+    setTool(tool);
   }
 
   /** Depois de qualquer alteração: refaz a geometria, as listas, a análise e salva. */
   function changed() {
-    invalidate();
+    geomCache = new Map();
+    scheduleAnalysis();
+    if (sel && !(sel.kind === 'agv' ? agv(sel.id) : sel.kind === 'trilho' ? trilho(sel.id) : trecho(sel.id))) sel = null;
     renderLists();
     renderPanel();
     requestDraw();
     saveToLocalMemory();
   }
 
-  const trilhoStart = tl => { const tr = trecho(tl.trechos[0]); return tr && tr.pts[0]; };
-  const trilhoEnd = tl => { const tr = trecho(tl.trechos[tl.trechos.length - 1]); return tr && tr.pts[tr.pts.length - 1]; };
-  const reversePts = pts => pts.slice().reverse();
+  const edit = fn => { pushUndo(); fn(); changed(); };
 
-  /** Ponta livre de trilho perto de (x, y) — para emendar o próximo traço. */
-  function findEndpoint(x, y) {
-    const tolM = SNAP_PX / view().zoom;
-    let best = null;
-    ac().trilhos.forEach(tl => {
-      if (tl.closed || !tl.trechos.length) return;
-      [['start', trilhoStart(tl)], ['end', trilhoEnd(tl)]].forEach(([which, p]) => {
-        if (!p) return;
-        const d = Math.hypot(p[0] - x, p[1] - y);
-        if (d <= tolM && (!best || d < best.d)) best = { tl, which, p, d };
-      });
+  /**
+   * Onde cada AGV preso está (trecho + fração no sentido do próprio trecho), para recolocá-lo depois de editar a rede:
+   * ele acompanha o trecho quando o desenho muda de tamanho ou de lugar.
+   */
+  function captureAnchors() {
+    return ac().agvs.filter(a => a.trilhoId != null).map(a => {
+      const tl = trilho(a.trilhoId), gm = tl && geom(tl);
+      const p = poseAt(a, 0);
+      if (!gm || !gm.segs.length) return { a, p };
+      const d = distanceAt({ ...a, delay: 0 }, gm, 0);
+      const sg = segAt(gm, d);
+      const local = sg.len > 0 ? Math.min(1, Math.max(0, (d - sg.g0) / sg.len)) : 0;
+      return { a, p, tlId: tl.id, trId: sg.id, rev: sg.rev, frac: sg.rev ? 1 - local : local };
     });
-    return best;
   }
 
-  /** Posição dos AGVs presos aos trilhos (para recolocá-los no mesmo lugar depois de editar a geometria). */
-  const capturePlaces = () => ac().agvs.filter(a => a.trilhoId != null).map(a => ({ a, p: poseAt(a, 0) }));
-
-  function restorePlaces(places) {
+  /** @param {boolean} ownTrilho  o AGV não troca de trilho (montagem do caminho) */
+  function restoreAnchors(anchors, ownTrilho = false) {
     geomCache = new Map();
-    places.forEach(({ a, p }) => {
-      const near = nearestTrilho(p.x, p.y, 3);
-      if (near) {
-        a.trilhoId = near.tl.id;
-        a.s0 = geoToReal(near.gm, near.n.g);
-      } else {
-        Object.assign(a, { trilhoId: null, x: p.x, y: p.y, angle: p.ang });
+    anchors.forEach(an => {
+      const { a, p } = an;
+      const own = trilho(an.tlId);
+      const candidates = ownTrilho ? [own] : [own, ...ac().trilhos];
+      const tl = an.trId != null && candidates.find(t => t && t.trechos.includes(an.trId));
+      if (tl) {
+        const sg = geom(tl).segs.find(s => s.id === an.trId);
+        a.trilhoId = tl.id;
+        a.s0 = sg.g0 + (sg.rev ? 1 - an.frac : an.frac) * sg.len;
+        if (sg.rev !== an.rev) a.dir = -a.dir;   // o trilho passou a percorrer o trecho ao contrário: o AGV segue igual
+        return;
       }
+      const near = ownTrilho ? (own && own.trechos.length ? { tl: own, n: M.nearestOnPoly(geom(own).pts, p.x, p.y) } : null)
+        : nearestTrilho(p.x, p.y, 3, an.tlId);
+      if (near && near.n) { a.trilhoId = near.tl.id; a.s0 = near.n.g; }
+      else Object.assign(a, { trilhoId: null, x: p.x, y: p.y, angle: p.ang });
     });
   }
 
-  /** Grava um traço novo: emenda na ponta de um trilho (início/fim) ou cria um trilho; fecha o circuito se encontrar. */
-  function commitTrecho(kind, pts) {
-    if (polyLen(kind === 'curve' ? [pts[0], pts[2]] : pts) < 0.2) return;
+  /** Alteração da rede (com desfazer): os AGVs continuam no mesmo ponto dos seus trechos. */
+  function editNet(fn, ownTrilho = false) {
     pushUndo();
-    const places = capturePlaces();
-    const first = pts[0], last = pts[pts.length - 1];
-    const a = findEndpoint(first[0], first[1]);
-    const b = findEndpoint(last[0], last[1]);
-    const tr = { id: newId(), kind, pts: pts.map(p => [p[0], p[1]]), realLen: null };
-    let tl = null;
-    if (a && a.which === 'end') { tl = a.tl; tr.pts[0] = a.p.slice(); tl.trechos.push(tr.id); }
-    else if (a && a.which === 'start') { tl = a.tl; tr.pts = reversePts(tr.pts); tr.pts[tr.pts.length - 1] = a.p.slice(); tl.trechos.unshift(tr.id); }
-    else if (b && b.which === 'start') { tl = b.tl; tr.pts[tr.pts.length - 1] = b.p.slice(); tl.trechos.unshift(tr.id); }
-    else if (b && b.which === 'end') { tl = b.tl; tr.pts = reversePts(tr.pts); tr.pts[0] = b.p.slice(); tl.trechos.push(tr.id); }
-    else {
-      tl = { id: newId(), name: `Trilho ${ac().trilhos.length + 1}`, color: PALETTE[ac().trilhos.length % PALETTE.length], trechos: [tr.id], closed: false };
-      ac().trilhos.push(tl);
-    }
-    ac().trechos.push(tr);
-    // fecha o circuito quando a outra ponta do traço cai no começo/fim do mesmo trilho
-    const s = trilhoStart(tl), e = trilhoEnd(tl);
-    if (tl.trechos.length > 1 && s && e && Math.hypot(s[0] - e[0], s[1] - e[1]) <= SNAP_PX / view().zoom) {
-      const lastTr = trecho(tl.trechos[tl.trechos.length - 1]);
-      lastTr.pts[lastTr.pts.length - 1] = s.slice();
-      tl.closed = true;
-    }
-    restorePlaces(places);
-    sel = { kind: 'trecho', id: tr.id };
+    const anchors = captureAnchors();
+    const r = fn();
+    restoreAnchors(anchors, ownTrilho);
     changed();
+    return r;
   }
 
-  function deleteTrecho(id) {
-    const tl = ac().trilhos.find(t => t.trechos.includes(id));
-    pushUndo();
-    const places = capturePlaces();
-    ac().trechos = ac().trechos.filter(t => t.id !== id);
-    if (tl) {
-      const i = tl.trechos.indexOf(id);
-      if (tl.closed) {   // circuito aberto no trecho removido: passa a começar logo depois dele
-        tl.trechos = [...tl.trechos.slice(i + 1), ...tl.trechos.slice(0, i)];
-        tl.closed = false;
-      } else {
-        const after = tl.trechos.slice(i + 1);
-        tl.trechos = tl.trechos.slice(0, i);
-        if (after.length) {
-          ac().trilhos.push({ id: newId(), name: `${tl.name} (parte 2)`, color: PALETTE[ac().trilhos.length % PALETTE.length], trechos: after, closed: false });
-        }
-      }
-      if (!tl.trechos.length) ac().trilhos = ac().trilhos.filter(t => t !== tl);
-    }
-    restorePlaces(places);
-    sel = null;
-    changed();
+  function warnLengths() {
+    const bad = ac().trechos.filter(M.lenMismatch);
+    if (bad.length) showMemToast(`⚠ ${bad.length} trecho(s) com comprimento definido não puderam manter a medida (marcados com ⚠)`, true);
   }
+
+  /* ── Comandos ─────────────────────────────────────────────────────────── */
+
+  function commitTrecho(kind, pts) {
+    if (M.polyLen(kind === 'curve' ? [pts[0], pts[2]] : pts) < 0.2) return;
+    pushUndo();
+    const anchors = captureAnchors();
+    const r = M.commitStroke(ac(), kind, pts, tolM());
+    if (!r) { undoStack.pop(); return; }
+    restoreAnchors(anchors);
+    sel = { kind: 'trecho', id: r.tr.id };
+    changed();
+    if (r.desvio) showMemToast('Ligação/desvio criado — para um AGV passar por ela, use ✎ Caminho no trilho dele');
+  }
+
+  function setTrechoLength(tr, L) {
+    if (!(L > 0)) return;
+    editNet(() => M.setLength(ac(), tr, L));
+    warnLengths();
+  }
+
+  function deleteTrecho(id) { editNet(() => M.deleteTrecho(ac(), id)); }
 
   function deleteTrilho(id) {
-    const tl = trilho(id);
-    if (!tl) return;
-    pushUndo();
-    const places = capturePlaces().filter(pl => pl.a.trilhoId === id);
-    ac().trechos = ac().trechos.filter(t => !tl.trechos.includes(t.id));
-    ac().trilhos = ac().trilhos.filter(t => t.id !== id);
-    places.forEach(({ a, p }) => Object.assign(a, { trilhoId: null, x: p.x, y: p.y, angle: p.ang }));
-    sel = null;
+    if (routeEdit === id) routeEdit = null;
+    editNet(() => M.deleteTrilho(ac(), id));
+    setTool(tool === 'route' ? 'select' : tool);
+  }
+
+  function reverseTrilho(tl) {
+    editNet(() => { if (tl.trechos.length > 1) tl.trechos.reverse(); else tl.rev = !tl.rev; });
+    // os AGVs ficam no mesmo ponto e passam a andar no novo sentido do trilho
+    ac().agvs.forEach(a => { if (a.trilhoId === tl.id) a.dir = -a.dir; });
     changed();
   }
 
-  function addAgv(x, y) {
+  function newTrilho() {
     pushUndo();
-    const n = ac().agvs.length;
-    const a = { id: newId(), name: `AGV ${n + 1}`, trilhoId: null, s0: 0, speed: 30, dir: 1, endMode: 'stop', delay: 0, orient: 'trans', x, y, angle: 0 };
-    const near = nearestTrilho(x, y, 20 / view().zoom + 0.5);
-    if (near) { a.trilhoId = near.tl.id; a.s0 = geoToReal(near.gm, near.n.g); }
-    ac().agvs.push(a);
-    sel = { kind: 'agv', id: a.id };
+    const tl = M.newTrilho(ac());
     changed();
+    startRouteEdit(tl.id);
+  }
+
+  function startRouteEdit(id) {
+    sel = { kind: 'trilho', id };
+    routeEdit = id;
+    setTool('route');
+    renderPanel();
+  }
+
+  /** Fim da montagem do caminho: trilho que ficou vazio é descartado. */
+  function finishRoute() {
+    const tl = trilho(routeEdit);
+    routeEdit = null;
+    if (tl && !tl.trechos.length) {
+      ac().agvs.forEach(a => {
+        if (a.trilhoId !== tl.id) return;
+        const p = poseAt(a, 0);
+        Object.assign(a, { trilhoId: null, x: p.x, y: p.y, angle: p.ang });
+      });
+      ac().trilhos = ac().trilhos.filter(t => t !== tl);
+      changed();
+    }
+  }
+
+  function routeClick(trId) {
+    const tl = trilho(routeEdit);
+    if (!tl) return;
+    let msg = null;
+    editNet(() => { msg = M.toggleRouteTrecho(ac(), tl, trId); }, true);
+    if (msg) { undoStack.pop(); showMemToast(msg, true); }
+    $('agvHint').textContent = routeHint();
+  }
+
+  function addAgv(m, keepTool) {
+    const prefer = sel && (sel.kind === 'trilho' ? sel.id : sel.kind === 'agv' ? (agv(sel.id) || {}).trilhoId : null);
+    const near = nearestTrilho(m[0], m[1], 20 / view().zoom + 0.5, prefer);
+    if (!near) { showMemToast('Clique sobre um trilho para colocar o AGV', true); return; }
+    const a = { id: ac().nextId++, name: `AGV ${ac().agvs.length + 1}`, trilhoId: near.tl.id, s0: near.n.g, speed: 30, dir: 1, endMode: 'stop', delay: 0, x: m[0], y: m[1], angle: 0 };
+    edit(() => { ac().agvs.push(a); });
+    sel = { kind: 'agv', id: a.id };
+    if (!keepTool) setTool('select');
+    renderPanel();
+    renderLists();
   }
 
   function deleteAgv(id) {
-    pushUndo();
-    ac().agvs = ac().agvs.filter(a => a.id !== id);
-    sel = null;
-    changed();
+    edit(() => { ac().agvs = ac().agvs.filter(a => a.id !== id); });
   }
 
   function deleteSelected() {
     if (!sel) return;
     if (sel.kind === 'agv') deleteAgv(sel.id);
     else if (sel.kind === 'trecho') deleteTrecho(sel.id);
+    else if (sel.kind === 'trilho') deleteTrilho(sel.id);
   }
 
   /* ── Desenho ──────────────────────────────────────────────────────────── */
@@ -4884,14 +5319,21 @@ const AgvFlow = (() => {
     lines(GRID, '#262f42', true);
   }
 
-  function strokePoly(pts, width, color, dash) {
+  /** Polilinha (em metros) desenhada com um afastamento lateral em px — faixas de cor lado a lado. */
+  function strokePoly(pts, width, color, dash, offPx = 0) {
+    const sp = pts.map(p => toPx(p[0], p[1]));
+    const out = offPx ? sp.map((p, i) => {
+      const a = sp[Math.max(0, i - 1)], b = sp[Math.min(sp.length - 1, i + 1)];
+      const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+      return [p[0] - (dy / l) * offPx, p[1] + (dx / l) * offPx];
+    }) : sp;
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.setLineDash(dash || []);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
-    pts.forEach((p, i) => { const [x, y] = toPx(p[0], p[1]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+    out.forEach(([x, y], i) => { if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -4906,41 +5348,69 @@ const AgvFlow = (() => {
     ctx.fillText(text, px, py + 3.5);
   }
 
-  function drawTrilhos() {
+  const laneOffset = (i, n) => (i - (n - 1) / 2) * LANE_PX;
+
+  function drawNetwork() {
+    const selTrilho = sel && sel.kind === 'trilho' ? trilho(sel.id) : null;
+    const candidates = routeEdit !== null && trilho(routeEdit) ? new Set(M.routeCandidates(ac(), trilho(routeEdit))) : new Set();
+    // destaque do trecho / trilho selecionado
+    ac().trechos.forEach(tr => {
+      const s = M.samples(tr);
+      if (sel && sel.kind === 'trecho' && sel.id === tr.id) strokePoly(s, 12, 'rgba(255,255,255,0.3)');
+      if (selTrilho && selTrilho.trechos.includes(tr.id)) strokePoly(s, 13, 'rgba(255,255,255,0.18)');
+      if (candidates.has(tr.id)) strokePoly(s, 9, 'rgba(255,255,255,0.75)', [7, 6]);
+    });
+    // trechos: uma faixa por trilho que passa por ele (cinza tracejado se nenhum)
+    ac().trechos.forEach(tr => {
+      const s = M.samples(tr);
+      const users = trilhosOf(tr.id);
+      if (!users.length) strokePoly(s, 2.5, '#64748b', [5, 4]);
+      users.forEach((tl, i) => strokePoly(s, 3, tl.color, null, laneOffset(i, users.length)));
+      const isSel = sel && sel.kind === 'trecho' && sel.id === tr.id;
+      if (isSel || view().zoom >= 4) {
+        const [mx, my] = toPx(...M.midPoint(s));
+        const bad = M.lenMismatch(tr);
+        label(`${bad ? '⚠ ' : ''}${fmt(M.trechoLen(tr), 1)} m${tr.len ? ' *' : ''}`, mx, my - 12, bad ? '#fca5a5' : (isSel ? '#ffffff' : (users[0] ? users[0].color : '#94a3b8')));
+      }
+    });
+    // setas do sentido de cada trilho (na faixa dele) e pontas dos trilhos abertos
     ac().trilhos.forEach(tl => {
-      tl.trechos.map(trecho).filter(Boolean).forEach(tr => {
-        const s = trechoSamples(tr);
-        const isSel = sel && sel.kind === 'trecho' && sel.id === tr.id;
-        if (isSel) strokePoly(s, 9, 'rgba(255,255,255,0.35)');
-        strokePoly(s, isSel ? 4 : 3, tl.color);
-        const mid = s[Math.floor(s.length / 2)];
-        if (isSel || view().zoom >= 4) {
-          const [mx, my] = toPx(mid[0], mid[1]);
-          const real = trechoRealLen(tr), custom = Number.isFinite(tr.realLen) && tr.realLen > 0;
-          label(`${fmt(real, 1)} m${custom ? ' *' : ''}`, mx, my - 12, isSel ? '#ffffff' : tl.color);
-        }
-      });
-      // setas de sentido do trilho e pontas
-      const gm = trilhoGeom(tl);
+      const gm = geom(tl);
       if (gm.pts.length < 2) return;
       const stepM = Math.max(GRID / 2, 120 / view().zoom);
       ctx.fillStyle = tl.color;
-      for (let g = stepM / 2; g < gm.geoLen; g += stepM) {
-        const p = pointAtGeo(gm, g), q = pointAtGeo(gm, Math.min(gm.geoLen, g + 0.01 + 1 / view().zoom));
+      for (let g = stepM / 2; g < gm.len; g += stepM) {
+        const p = pointAt(gm, g), q = pointAt(gm, Math.min(gm.len, g + 0.01 + 1 / view().zoom));
         const a = Math.atan2(q[1] - p[1], q[0] - p[0]);
+        const sg = segAt(gm, g), users = trilhosOf(sg.id);
+        const off = laneOffset(users.indexOf(tl), users.length) * (sg.rev ? -1 : 1);
         const [px, py] = toPx(p[0], p[1]);
-        ctx.save(); ctx.translate(px, py); ctx.rotate(a);
+        ctx.save(); ctx.translate(px, py); ctx.rotate(a); ctx.translate(0, off);
         ctx.beginPath(); ctx.moveTo(5, 0); ctx.lineTo(-4, -4); ctx.lineTo(-4, 4); ctx.closePath(); ctx.fill();
         ctx.restore();
       }
-      if (!tl.closed) {
-        [trilhoStart(tl), trilhoEnd(tl)].forEach((p, i) => {
+      if (!gm.closed) {
+        [gm.pts[0], gm.pts[gm.pts.length - 1]].forEach((p, i) => {
           const [px, py] = toPx(p[0], p[1]);
           ctx.fillStyle = i ? '#0b0d12' : tl.color;
           ctx.strokeStyle = tl.color;
           ctx.lineWidth = 2;
           ctx.beginPath(); ctx.arc(px, py, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         });
+      }
+    });
+    // ligações (3 ou mais trechos) e, na ferramenta Mover, todas as pontas
+    ac().nodes.forEach(n => {
+      const deg = M.degree(ac(), n.id);
+      const [px, py] = toPx(n.x, n.y);
+      if (tool === 'move') {
+        ctx.fillStyle = drag && drag.kind === 'node' && drag.id === n.id ? '#facc15' : '#f1f5f9';
+        ctx.strokeStyle = '#0b0d12';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.rect(px - 4.5, py - 4.5, 9, 9); ctx.fill(); ctx.stroke();
+      } else if (deg >= 3) {
+        ctx.fillStyle = '#f1f5f9';
+        ctx.beginPath(); ctx.arc(px, py, 3.5, 0, Math.PI * 2); ctx.fill();
       }
     });
   }
@@ -4956,6 +5426,7 @@ const AgvFlow = (() => {
       const hu = Math.max(3, b.hu * z), hv = Math.max(2, b.hv * z);
       const isSel = sel && sel.kind === 'agv' && sel.id === a.id;
       const hit = hits.has(a.id);
+      const dir = p.move || a.dir;
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(p.ang);
@@ -4966,16 +5437,14 @@ const AgvFlow = (() => {
       ctx.strokeStyle = hit ? '#fecaca' : (isSel ? '#ffffff' : 'rgba(11,13,18,0.9)');
       ctx.lineWidth = isSel || hit ? 2.5 : 1.5;
       ctx.stroke();
-      // frente do AGV (atravessado: lado esquerdo do trilho; longitudinal: sentido do trilho)
+      // frente (para onde está andando) e seta do movimento
+      const band = Math.max(1.5, hu * 0.2);
       ctx.fillStyle = 'rgba(11,13,18,0.75)';
-      if (a.orient === 'long') ctx.fillRect(hu - Math.max(1.5, hu * 0.2), -hv, Math.max(1.5, hu * 0.2), 2 * hv);
-      else ctx.fillRect(-hu, -hv, 2 * hu, Math.max(1.5, hv * 0.2));
-      // seta do movimento (no sentido do trilho)
-      const dir = p.move || a.dir;
+      ctx.fillRect(dir > 0 ? hu - band : -hu, -hv, band, 2 * hv);
       if (hu > 5) {
         ctx.fillStyle = '#ffffff';
         ctx.beginPath();
-        ctx.moveTo(dir * hu * 0.7, 0); ctx.lineTo(-dir * hu * 0.1, -hv * 0.45); ctx.lineTo(-dir * hu * 0.1, hv * 0.45);
+        ctx.moveTo(dir * hu * 0.55, 0); ctx.lineTo(-dir * hu * 0.25, -hv * 0.45); ctx.lineTo(-dir * hu * 0.25, hv * 0.45);
         ctx.closePath(); ctx.fill();
       }
       ctx.restore();
@@ -4983,26 +5452,29 @@ const AgvFlow = (() => {
     });
   }
 
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+
   function drawDraft() {
     if (hoverSnap) {
       const [px, py] = toPx(hoverSnap.p[0], hoverSnap.p[1]);
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(px, py, SNAP_PX, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      if (hoverSnap.kind === 'node') ctx.arc(px, py, SNAP_PX, 0, Math.PI * 2);
+      else { ctx.moveTo(px, py - SNAP_PX); ctx.lineTo(px + SNAP_PX, py); ctx.lineTo(px, py + SNAP_PX); ctx.lineTo(px - SNAP_PX, py); ctx.closePath(); }
+      ctx.stroke();
+      if (hoverSnap.kind === 'trecho') label('desvio', px, py - SNAP_PX - 10, '#ffffff');
     }
     if (!draft) return;
-    const pts = draft.kind === 'curve' ? trechoSamples({ kind: 'curve', pts: [draft.a, draft.c || mid(draft.a, draft.b), draft.b] })
+    const pts = draft.kind === 'curve' ? M.samples({ kind: 'curve', pts: [draft.a, draft.c || mid(draft.a, draft.b), draft.b] })
       : draft.kind === 'line' ? [draft.a, draft.b] : draft.pts;
     strokePoly(pts, 2.5, '#e2e8f0', [6, 5]);
     if (draft.kind !== 'pencil') {
-      const len = draft.kind === 'line' ? dist(draft.a, draft.b) : polyLen(pts);
       const end = pts[pts.length - 1];
       const [px, py] = toPx(end[0], end[1]);
-      label(`${fmt(len, 2)} m`, px + 30, py - 14, '#e2e8f0');
+      label(`${fmt(M.polyLen(pts), 2)} m`, px + 30, py - 14, '#e2e8f0');
     }
   }
-
-  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
 
   function draw() {
     drawQueued = false;
@@ -5011,7 +5483,7 @@ const AgvFlow = (() => {
     if (!W || !H) return;
     ctx.clearRect(0, 0, W, H);
     drawGrid();
-    drawTrilhos();
+    drawNetwork();
     drawAgvs();
     drawDraft();
     // escala
@@ -5060,84 +5532,104 @@ const AgvFlow = (() => {
   /* ── Ferramentas e ponteiro ───────────────────────────────────────────── */
 
   const HINTS = {
-    select: 'Clique num trecho ou AGV para configurar · arraste um AGV para outro ponto/trilho · arraste o fundo para mover a vista · Delete apaga o selecionado',
-    line: 'Linha: clique e arraste do início ao fim. Começar ou terminar na ponta de um trilho emenda (círculo branco)',
+    select: 'Clique num trecho ou AGV para configurar · arraste um AGV pelo trilho · arraste o fundo para mover a vista · Delete apaga o selecionado',
+    line: 'Linha: clique e arraste. Numa ponta (○) continua o trilho; no meio de um trecho (◇) liga com desvio · Shift = ângulos de 15°',
     curve: 'Curva: arraste do início ao fim, solte e mova o mouse para curvar; clique para fixar (Esc cancela)',
     pencil: 'Lápis: desenhe segurando o botão; ao soltar o traço é suavizado seguindo o seu caminho',
-    agv: 'AGV (0,80 × 1,50 m): clique sobre um trilho para posicioná-lo nele',
-    pan: 'Mover: arraste para deslocar a vista · roda do mouse aproxima/afasta'
+    move: 'Mover: arraste uma ponta (□) — solte sobre outra ponta ou trecho para ligar · arraste um trecho para mover o trilho inteiro com o que está ligado nele',
+    agv: 'AGV (0,80 × 1,50 m): clique sobre um trilho; depois a ferramenta volta para Selecionar (Shift+clique coloca vários)',
+    pan: 'Vista: arraste para deslocar · roda do mouse aproxima/afasta',
+    route: ''
   };
+  const CURSORS = { select: 'default', pan: 'grab', move: 'move', route: 'pointer' };
+
+  function routeHint() {
+    const tl = trilho(routeEdit);
+    if (!tl) return '';
+    return `Caminho do ${tl.name}: clique nos trechos tracejados para acrescentar numa ponta, ou no trecho de uma ponta para tirar · Enter ou Esc conclui`;
+  }
 
   function setTool(t) {
-    tool = HINTS[t] ? t : 'select';
+    const next = HINTS[t] !== undefined ? t : 'select';
+    if (routeEdit !== null && next !== 'route') finishRoute();
+    tool = next;
     draft = null;
+    hoverSnap = null;
     document.querySelectorAll('#agvTools [data-arg]').forEach(b => b.classList.toggle('active', b.dataset.arg === tool));
-    $('agvHint').textContent = HINTS[tool];
-    canvas.style.cursor = tool === 'pan' ? 'grab' : (tool === 'select' ? 'default' : 'crosshair');
+    $('agvHint').textContent = tool === 'route' ? routeHint() : HINTS[tool];
+    canvas.style.cursor = CURSORS[tool] || 'crosshair';
+    renderPanel();
     requestDraw();
   }
 
   const pointer = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
 
+  function pickAgv(px, py) {
+    const [mx, my] = toM(px, py), pad = 4 / view().zoom;
+    for (let i = ac().agvs.length - 1; i >= 0; i--) {
+      const a = ac().agvs[i], b = boxOf(a, poseAt(a, simTime));
+      const dx = mx - b.x, dy = my - b.y;
+      if (Math.abs(dx * b.ux + dy * b.uy) <= b.hu + pad && Math.abs(-dx * b.uy + dy * b.ux) <= b.hv + pad) return a.id;
+    }
+    return null;
+  }
+
+  function pickTrecho(px, py) {
+    const hit = M.nearestTrecho(ac(), toM(px, py), PICK_PX / view().zoom);
+    return hit ? hit.id : null;
+  }
+
   /** Elemento sob o ponteiro: AGV (por cima) ou trecho. */
   function pick(px, py) {
-    for (let i = ac().agvs.length - 1; i >= 0; i--) {
-      const a = ac().agvs[i], p = poseAt(a, simTime), b = boxOf(a, p);
-      const [mx, my] = toM(px, py), dx = mx - b.x, dy = my - b.y;
-      const pad = 4 / view().zoom;
-      if (Math.abs(dx * b.ux + dy * b.uy) <= b.hu + pad && Math.abs(-dx * b.uy + dy * b.ux) <= b.hv + pad) return { kind: 'agv', id: a.id };
-    }
-    let best = null;
-    ac().trechos.forEach(tr => {
-      const s = trechoSamples(tr);
-      for (let i = 1; i < s.length; i++) {
-        const [ax, ay] = toPx(s[i - 1][0], s[i - 1][1]), [bx, by] = toPx(s[i][0], s[i][1]);
-        const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
-        const f = Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy) / l2));
-        const d = Math.hypot(px - (ax + dx * f), py - (ay + dy * f));
-        if (d <= PICK_PX && (!best || d < best.d)) best = { kind: 'trecho', id: tr.id, d };
-      }
-    });
-    return best && { kind: best.kind, id: best.id };
+    const a = pickAgv(px, py);
+    if (a !== null) return { kind: 'agv', id: a };
+    const t = pickTrecho(px, py);
+    return t !== null ? { kind: 'trecho', id: t } : null;
   }
 
-  /** Ponto do traço: emenda na ponta de um trilho, se estiver perto. */
+  /** Onde um ponto vai ligar: num nó (ponta) ou no meio de um trecho. */
+  function snapTarget(m, excludeNode = null) {
+    const nd = M.nearestNode(ac(), m, tolM(), excludeNode);
+    if (nd) return { kind: 'node', id: nd.id, p: nd.p };
+    const tr = M.nearestTrecho(ac(), m, tolM(), excludeNode);
+    return tr ? { kind: 'trecho', id: tr.id, p: tr.p } : null;
+  }
+
   function snapPoint(m) {
-    const ep = findEndpoint(m[0], m[1]);
-    hoverSnap = ep;
-    return ep ? ep.p.slice() : m;
+    hoverSnap = snapTarget(m);
+    return hoverSnap ? hoverSnap.p.slice() : m;
   }
 
-  /** Simplificação do traço do lápis (Ramer–Douglas–Peucker). */
-  function simplify(pts, eps) {
-    if (pts.length < 3) return pts;
-    const [a, b] = [pts[0], pts[pts.length - 1]];
-    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
-    let idx = 0, maxD = 0;
-    for (let i = 1; i < pts.length - 1; i++) {
-      const d = Math.abs(dy * pts[i][0] - dx * pts[i][1] + b[0] * a[1] - b[1] * a[0]) / l;
-      if (d > maxD) { maxD = d; idx = i; }
-    }
-    if (maxD <= eps) return [a, b];
-    return [...simplify(pts.slice(0, idx + 1), eps).slice(0, -1), ...simplify(pts.slice(idx), eps)];
-  }
+  const startPan = (px, py) => { drag = { kind: 'pan', px, py, cx: view().cx, cy: view().cy }; };
 
   function onDown(e) {
     const [px, py] = pointer(e);
     const m = toM(px, py);
     if (e.button === 1 || e.button === 2 || tool === 'pan') {
-      drag = { kind: 'pan', px, py, cx: view().cx, cy: view().cy };
+      startPan(px, py);
+    } else if (tool === 'route') {
+      const t = pickTrecho(px, py);
+      if (t !== null) { routeClick(t); return; }
+      startPan(px, py);
     } else if (tool === 'select') {
       const hit = pick(px, py);
       sel = hit;
       if (hit && hit.kind === 'agv') {
         pushUndo();
         drag = { kind: 'agv', id: hit.id, moved: false };
-      } else if (!hit) {
-        drag = { kind: 'pan', px, py, cx: view().cx, cy: view().cy };
-      }
+      } else if (!hit) startPan(px, py);
       renderPanel();
       renderLists();
+    } else if (tool === 'move') {
+      const nd = M.nearestNode(ac(), m, tolM());
+      const tr = nd ? null : pickTrecho(px, py);
+      if (nd) {
+        pushUndo();
+        drag = { kind: 'node', id: nd.id, moved: false, anchors: captureAnchors() };
+      } else if (tr !== null) {
+        pushUndo();
+        drag = { kind: 'group', nodes: M.component(ac(), trecho(tr).a), last: m, moved: false, anchors: captureAnchors() };
+      } else startPan(px, py);
     } else if (tool === 'line') {
       const a = snapPoint(m);
       draft = { kind: 'line', a, b: a.slice() };
@@ -5152,7 +5644,9 @@ const AgvFlow = (() => {
     } else if (tool === 'pencil') {
       draft = { kind: 'pencil', pts: [snapPoint(m)] };
     } else if (tool === 'agv') {
-      addAgv(m[0], m[1]);
+      const hit = pickAgv(px, py);
+      if (hit !== null) { sel = { kind: 'agv', id: hit }; setTool('select'); return; }
+      addAgv(m, e.shiftKey);
       return;
     }
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ponteiro já liberado */ }
@@ -5171,11 +5665,10 @@ const AgvFlow = (() => {
     }
     if (drag && drag.kind === 'agv') {
       const a = agv(drag.id);
-      const near = nearestTrilho(m[0], m[1], 20 / view().zoom + 0.5);
+      const near = nearestTrilho(m[0], m[1], 20 / view().zoom + 0.5, a.trilhoId);
       if (near) {
         a.trilhoId = near.tl.id;
-        a.s0 = geoToReal(near.gm, near.n.g);
-        a.delay = a.delay || 0;
+        a.s0 = near.n.g;
         simTime = 0;
       } else {
         Object.assign(a, { trilhoId: null, x: m[0], y: m[1] });
@@ -5184,12 +5677,28 @@ const AgvFlow = (() => {
       requestDraw();
       return;
     }
+    if (drag && (drag.kind === 'node' || drag.kind === 'group')) {
+      if (drag.kind === 'node') {
+        hoverSnap = snapTarget(m, drag.id);
+        const n = nodeOf(drag.id), goal = hoverSnap ? hoverSnap.p : m;
+        M.moveNodes(ac(), new Map([[drag.id, [goal[0] - n.x, goal[1] - n.y]]]));
+      } else {
+        const d = [m[0] - drag.last[0], m[1] - drag.last[1]];
+        drag.last = m;
+        M.moveNodes(ac(), new Map([...drag.nodes].map(id => [id, d])));
+      }
+      drag.moved = true;
+      restoreAnchors(drag.anchors);
+      scheduleAnalysis();
+      requestDraw();
+      return;
+    }
     hoverSnap = null;
     if (tool === 'line' || tool === 'curve' || tool === 'pencil') {
-      if (!draft) snapPoint(m);   // mostra onde vai emendar
+      if (!draft) snapPoint(m);   // mostra onde vai ligar
       else if (draft.kind === 'line') {
         let b = snapPoint(m);
-        if (e.shiftKey && b === m) {   // Shift: ângulos múltiplos de 15°
+        if (e.shiftKey && !hoverSnap) {   // Shift: ângulos múltiplos de 15°
           const ang = Math.round(Math.atan2(m[1] - draft.a[1], m[0] - draft.a[0]) / (Math.PI / 12)) * (Math.PI / 12);
           const l = dist(draft.a, m);
           b = [draft.a[0] + l * Math.cos(ang), draft.a[1] + l * Math.sin(ang)];
@@ -5204,9 +5713,16 @@ const AgvFlow = (() => {
         snapPoint(m);
       }
       requestDraw();
-    } else if (tool === 'select') {
-      const hit = pick(px, py);
-      canvas.style.cursor = hit ? (hit.kind === 'agv' ? 'grab' : 'pointer') : 'default';
+    } else if (tool === 'select' || tool === 'move' || tool === 'route') {
+      if (tool === 'move') {
+        const over = M.nearestNode(ac(), m, tolM()) || pickTrecho(px, py) !== null;
+        canvas.style.cursor = over ? 'move' : 'default';
+      } else if (tool === 'route') {
+        canvas.style.cursor = pickTrecho(px, py) !== null ? 'pointer' : 'default';
+      } else {
+        const hit = pick(px, py);
+        canvas.style.cursor = hit ? (hit.kind === 'agv' ? 'grab' : 'pointer') : 'default';
+      }
     }
   }
 
@@ -5214,11 +5730,21 @@ const AgvFlow = (() => {
     const [px, py] = pointer(e);
     const m = toM(px, py);
     if (drag) {
-      if (drag.kind === 'agv') {
-        if (drag.moved) changed();
-        else undoStack.pop();   // só um clique: nada mudou
-      } else if (drag.kind === 'pan') saveToLocalMemory();
+      const d = drag;
       drag = null;
+      if (d.kind === 'agv') {
+        if (d.moved) changed();
+        else undoStack.pop();   // só um clique: nada mudou
+      } else if (d.kind === 'node' || d.kind === 'group') {
+        if (!d.moved) { undoStack.pop(); requestDraw(); return; }
+        if (d.kind === 'node' && hoverSnap) {   // soltou sobre outra ponta ou trecho: liga
+          const into = hoverSnap.kind === 'node' ? hoverSnap.id : M.splitAt(ac(), trecho(hoverSnap.id), hoverSnap.p, 1e-6);
+          if (!M.mergeNodes(ac(), d.id, into)) showMemToast('Não dá para ligar as duas pontas de uma mesma linha', true);
+        }
+        hoverSnap = null;
+        restoreAnchors(d.anchors);
+        changed();
+      } else if (d.kind === 'pan') saveToLocalMemory();
       return;
     }
     if (!draft) return;
@@ -5232,7 +5758,7 @@ const AgvFlow = (() => {
     } else if (draft.kind === 'pencil') {
       const end = snapPoint(m);
       draft.pts.push(end);
-      const pts = simplify(draft.pts, 5 / view().zoom);
+      const pts = M.simplify(draft.pts, 5 / view().zoom);
       draft = null;
       if (pts.length >= 2) commitTrecho(pts.length === 2 ? 'line' : 'path', pts);
     }
@@ -5271,85 +5797,129 @@ const AgvFlow = (() => {
     return s;
   }
 
-  const edit = fn => { pushUndo(); fn(); changed(); };
+  function button(text, cls, onClick, title) {
+    const b = document.createElement('button');
+    b.className = cls;
+    b.textContent = text;
+    if (title) b.title = title;
+    b.addEventListener('click', onClick);
+    return b;
+  }
 
-  /** Painel flutuante: configura o trecho ou o AGV selecionado. */
+  function info(text) {
+    const d = document.createElement('div');
+    d.className = 'agv-panel-info';
+    d.textContent = text;
+    return d;
+  }
+
+  /** Botão de um trilho (cor + nome) que seleciona o trilho. */
+  function trilhoChip(tl) {
+    const chip = button(`● ${tl.name}`, 'eng-chip', () => { sel = { kind: 'trilho', id: tl.id }; renderPanel(); requestDraw(); }, 'Ver o trilho');
+    chip.style.color = tl.color;
+    return chip;
+  }
+
+  const trilhoKind = (tl, gm) => (!tl.trechos.length ? 'Vazio' : (gm.closed ? 'Circuito' : 'Aberto'));
+
+  /** Painel flutuante: configura o trecho, o trilho ou o AGV selecionado. */
   function renderPanel() {
     const panel = $('agvPanel');
     panel.replaceChildren();
-    const item = sel && (sel.kind === 'agv' ? agv(sel.id) : trecho(sel.id));
+    const item = sel && (sel.kind === 'agv' ? agv(sel.id) : sel.kind === 'trilho' ? trilho(sel.id) : trecho(sel.id));
     if (!item) { panel.hidden = true; return; }
     panel.hidden = false;
     const title = document.createElement('div');
     title.className = 'agv-panel-title';
-    const close = document.createElement('button');
-    close.className = 'eng-chip';
-    close.textContent = '✕';
-    close.title = 'Fechar';
-    close.addEventListener('click', () => { sel = null; renderPanel(); requestDraw(); });
+    const head = document.createElement('span');
+    title.append(head, button('✕', 'eng-chip', () => { if (routeEdit !== null) setTool('select'); sel = null; renderPanel(); requestDraw(); }, 'Fechar'));
+    panel.appendChild(title);
 
     if (sel.kind === 'trecho') {
-      const tl = ac().trilhos.find(t => t.trechos.includes(item.id));
-      const kindName = { line: 'Linha', curve: 'Curva', path: 'Traço (lápis)' }[item.kind];
-      title.textContent = `${kindName} · ${tl ? tl.name : 'sem trilho'}`;
-      title.appendChild(close);
-      panel.appendChild(title);
-      const info = document.createElement('div');
-      info.className = 'agv-panel-info';
-      info.textContent = `Comprimento desenhado: ${fmt(trechoGeoLen(item), 2)} m (pela grade)`;
-      panel.append(info,
-        field('Representa (m)', numberInput(Number.isFinite(item.realLen) ? item.realLen : null, 0.1, v => edit(() => {
-          const places = capturePlaces();
-          item.realLen = v !== null && v > 0 ? v : null;
-          restorePlaces(places);
-        }), { placeholder: fmt(trechoGeoLen(item), 2) })));
-      const del = document.createElement('button');
-      del.className = 'btn btn-delete';
-      del.textContent = '✕ Excluir trecho';
-      del.addEventListener('click', () => deleteTrecho(item.id));
-      panel.appendChild(del);
+      head.textContent = { line: 'Linha', curve: 'Curva', path: 'Traço (lápis)' }[item.kind];
+      const users = trilhosOf(item.id);
+      const chips = document.createElement('div');
+      chips.className = 'eng-chips';
+      chips.append(info('Trilhos:'), ...(users.length ? users.map(trilhoChip) : [info('nenhum passa por este trecho')]));
+      const len = M.trechoLen(item);
+      panel.append(
+        chips,
+        field('Comprimento (m)', numberInput(Math.round(len * 100) / 100, 0.1, v => setTrechoLength(item, v))),
+        info('Ao mudar o comprimento, o desenho se ajusta à medida e o que está ligado acompanha.')
+      );
+      if (item.len) {
+        const bad = M.lenMismatch(item);
+        panel.append(info(bad ? `⚠ Definido ${fmt(item.len, 2)} m, mas o desenho tem ${fmt(len, 2)} m (alterado por outra edição)` : `* Comprimento definido: ${fmt(item.len, 2)} m`));
+        const row = document.createElement('div');
+        row.className = 'btn-group';
+        if (bad) row.appendChild(button('↺ Reaplicar', 'btn', () => setTrechoLength(item, item.len), 'Ajusta o desenho de novo à medida definida'));
+        row.appendChild(button('Liberar medida', 'btn', () => edit(() => { item.len = null; }), 'O trecho deixa de ter comprimento definido (pode esticar quando outro trecho mudar)'));
+        panel.appendChild(row);
+      }
+      panel.appendChild(button('✕ Excluir trecho', 'btn btn-delete', () => deleteTrecho(item.id)));
       return;
     }
 
-    title.textContent = `▭ ${item.name}`;
-    title.appendChild(close);
-    panel.appendChild(title);
+    if (sel.kind === 'trilho') {
+      head.textContent = `● ${item.name}`;
+      head.style.color = item.color;
+      const gm = geom(item);
+      const name = document.createElement('input');
+      name.className = 'eng-input';
+      name.value = item.name;
+      name.addEventListener('change', () => edit(() => { item.name = name.value.trim() || item.name; }));
+      const color = document.createElement('input');
+      color.type = 'color';
+      color.className = 'agv-color';
+      color.value = item.color;
+      color.addEventListener('change', () => edit(() => { item.color = color.value; }));
+      const nAgv = ac().agvs.filter(a => a.trilhoId === item.id).length;
+      const editing = routeEdit === item.id;
+      const row = document.createElement('div');
+      row.className = 'btn-group';
+      row.append(
+        button(editing ? '✓ Concluir caminho' : '✎ Editar caminho', editing ? 'btn active' : 'btn', () => (editing ? setTool('select') : startRouteEdit(item.id)),
+          'Escolhe os trechos por onde o trilho passa (inclusive trechos de outros trilhos, nos desvios)'),
+        button('⇄ Inverter sentido', 'btn', () => reverseTrilho(item), 'Os AGVs do trilho passam a andar no outro sentido')
+      );
+      panel.append(
+        field('Nome', name),
+        field('Cor', color),
+        info(`${trilhoKind(item, gm)} · ${item.trechos.length} trecho(s) · ${fmt(gm.len, 1)} m · ${nAgv} AGV(s)`),
+        row,
+        button('✕ Excluir trilho', 'btn btn-delete', () => deleteTrilho(item.id), 'Os trechos que só este trilho usa são apagados; os AGVs dele ficam soltos')
+      );
+      return;
+    }
+
+    head.textContent = `▭ ${item.name}`;
     const name = document.createElement('input');
     name.className = 'eng-input';
     name.value = item.name;
     name.addEventListener('change', () => edit(() => { item.name = name.value.trim() || item.name; }));
-    const trilhos = [['', '— solto (não anda) —'], ...ac().trilhos.map(t => [t.id, t.name])];
-    const dirOptions = item.orient === 'long'
-      ? [[1, 'Para a frente ▶'], [-1, '◀ De ré']]
-      : [[1, 'Para a direita dele ▶'], [-1, '◀ Para a esquerda dele']];
+    const trilhos = [['', '— solto (não anda) —'], ...ac().trilhos.filter(t => t.trechos.length).map(t => [t.id, t.name])];
     panel.append(
       field('Nome', name),
       field('Trilho', selectInput(trilhos, item.trilhoId ?? '', v => edit(() => {
         const p = poseAt(item, 0);
         const tl = trilho(Number(v));
         if (!tl) { Object.assign(item, { trilhoId: null, x: p.x, y: p.y, angle: p.ang }); return; }
-        const gm = trilhoGeom(tl);
         item.trilhoId = tl.id;
-        item.s0 = geoToReal(gm, nearestOnTrilho(gm, p.x, p.y).g);
+        item.s0 = M.nearestOnPoly(geom(tl).pts, p.x, p.y).g;
       }))),
       field('Velocidade (m/min)', numberInput(item.speed, 1, v => edit(() => { item.speed = Math.max(0, v || 0); }))),
-      field('Sentido', selectInput(dirOptions, item.dir, v => edit(() => { item.dir = Number(v) < 0 ? -1 : 1; }))),
+      field('Sentido', selectInput(DIR_OPTIONS, item.dir, v => edit(() => { item.dir = Number(v) < 0 ? -1 : 1; }))),
       field('Posição inicial (m)', numberInput(Math.round(item.s0 * 100) / 100, 0.1, v => edit(() => { item.s0 = Math.max(0, v || 0); }))),
       field('Partida (s)', numberInput(item.delay || 0, 1, v => edit(() => { item.delay = Math.max(0, v || 0); }))),
-      field('No fim do trilho', selectInput(Object.entries(END_MODES), item.endMode, v => edit(() => { item.endMode = END_MODES[v] ? v : 'stop'; }))),
-      field('Posição no trilho', selectInput([['trans', 'Atravessado (anda de lado)'], ['long', 'Comprido no sentido do trilho']], item.orient, v => edit(() => { item.orient = v === 'long' ? 'long' : 'trans'; })))
+      field('No fim do trilho', selectInput(Object.entries(END_MODES), item.endMode, v => edit(() => { item.endMode = END_MODES[v] ? v : 'stop'; })))
     );
     const tl = trilho(item.trilhoId);
-    const info = document.createElement('div');
-    info.className = 'agv-panel-info';
-    info.textContent = tl
-      ? `${tl.closed ? 'Circuito fechado' : 'Trilho aberto'} · ${fmt(trilhoGeom(tl).realLen, 1)} m · ${AGV_SHORT.toFixed(2)} × ${AGV_LONG.toFixed(2)} m`
-      : 'Arraste o AGV (ou escolha um trilho) para ele andar sobre o caminho';
-    const del = document.createElement('button');
-    del.className = 'btn btn-delete';
-    del.textContent = '✕ Excluir AGV';
-    del.addEventListener('click', () => deleteAgv(item.id));
-    panel.append(info, del);
+    panel.append(
+      info(tl
+        ? `${trilhoKind(tl, geom(tl))} · ${fmt(geom(tl).len, 1)} m · AGV ${AGV_SHORT.toFixed(2)} × ${AGV_LONG.toFixed(2)} m, comprido no trilho`
+        : 'Arraste o AGV (ou escolha um trilho) para ele andar sobre o caminho'),
+      button('✕ Excluir AGV', 'btn btn-delete', () => deleteAgv(item.id))
+    );
   }
 
   function cellRow(tbody, cells, onClick) {
@@ -5379,15 +5949,16 @@ const AgvFlow = (() => {
       name.className = 'eng-input eng-name';
       name.value = tl.name;
       name.addEventListener('change', () => edit(() => { tl.name = name.value.trim() || tl.name; }));
-      const gm = trilhoGeom(tl);
+      const gm = geom(tl);
       const nAgv = ac().agvs.filter(a => a.trilhoId === tl.id).length;
-      const del = document.createElement('button');
-      del.className = 'btn btn-delete';
-      del.textContent = '✕';
-      del.title = 'Excluir o trilho inteiro (os AGVs dele ficam soltos)';
-      del.addEventListener('click', () => deleteTrilho(tl.id));
-      cellRow(tb, [color, name, String(tl.trechos.length), `${fmt(gm.realLen, 1)} m`, tl.closed ? 'Circuito' : 'Aberto', String(nAgv), del],
-        () => { sel = { kind: 'trecho', id: tl.trechos[0] }; renderPanel(); requestDraw(); });
+      const actions = document.createElement('div');
+      actions.className = 'btn-group';
+      actions.append(
+        button('✎', 'btn', () => startRouteEdit(tl.id), 'Editar o caminho (trechos por onde passa)'),
+        button('✕', 'btn btn-delete', () => deleteTrilho(tl.id), 'Excluir o trilho (os AGVs dele ficam soltos)')
+      );
+      cellRow(tb, [color, name, String(tl.trechos.length), `${fmt(gm.len, 1)} m`, trilhoKind(tl, gm), String(nAgv), actions],
+        () => { sel = { kind: 'trilho', id: tl.id }; renderPanel(); requestDraw(); });
     });
 
     const ab = $('agvAgvBody');
@@ -5398,8 +5969,7 @@ const AgvFlow = (() => {
       const dot = document.createElement('span');
       dot.className = 'agv-dot';
       dot.style.background = tl ? tl.color : '#64748b';
-      const dirTxt = a.orient === 'long' ? (a.dir > 0 ? 'Frente ▶' : '◀ Ré') : (a.dir > 0 ? 'Direita ▶' : '◀ Esquerda');
-      cellRow(ab, [dot, a.name, tl ? tl.name : 'solto', `${fmt(a.speed, 1)} m/min`, dirTxt, END_MODES[a.endMode]],
+      cellRow(ab, [dot, a.name, tl ? tl.name : 'solto', `${fmt(a.speed, 1)} m/min`, a.dir > 0 ? '▶ No sentido' : '◀ Contra', END_MODES[a.endMode]],
         () => { sel = { kind: 'agv', id: a.id }; renderPanel(); requestDraw(); });
     });
   }
@@ -5430,10 +6000,11 @@ const AgvFlow = (() => {
   function render() {
     $('agvDuration').value = String(ac().duration);
     $('agvScrubber').max = String(ac().duration);
-    setTool(tool);
+    if (routeEdit !== null && !trilho(routeEdit)) routeEdit = null;
+    geomCache = new Map();
+    setTool(routeEdit !== null ? 'route' : (tool === 'route' ? 'select' : tool));
     renderLists();
-    renderPanel();
-    invalidate();
+    scheduleAnalysis();
     requestDraw();
   }
 
@@ -5463,8 +6034,10 @@ const AgvFlow = (() => {
     });
     document.addEventListener('keydown', e => {
       if (ui.view !== 'agv' || e.target.closest('input, select, textarea')) return;
-      if (e.key === 'Escape') { draft = null; sel = null; renderPanel(); requestDraw(); }
-      else if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); e.preventDefault(); }
+      if (e.key === 'Escape' || (e.key === 'Enter' && routeEdit !== null)) {
+        if (routeEdit !== null) setTool('select');
+        else { draft = null; sel = null; renderPanel(); requestDraw(); }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); e.preventDefault(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { undo(); e.preventDefault(); }
     });
     render();
@@ -5477,6 +6050,7 @@ const AgvFlow = (() => {
     setTool,
     undo,
     fit,
+    newTrilho,
     zoomIn: () => zoomAt(1.25),
     zoomOut: () => zoomAt(0.8),
     togglePlay: () => setPlaying(!playing),
@@ -5640,30 +6214,34 @@ function mergeConfig(target, cfg) {
 function mergeAgvConfig(t, c) {
   const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
   const pt = p => Array.isArray(p) && p.length >= 2 && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]));
+  const legacyLens = [];   // formato anterior: "representa X m" (realLen) vira o comprimento do desenho
   if (Array.isArray(c.trechos)) {
+    t.nodes = Array.isArray(c.nodes)
+      ? c.nodes.filter(n => n && Number.isFinite(Number(n.x)) && Number.isFinite(Number(n.y))).map(n => ({ id: num(n.id, -1), x: Number(n.x), y: Number(n.y) }))
+      : [];
     t.trechos = c.trechos
-      .filter(tr => tr && ['line', 'curve', 'path'].includes(tr.kind) && Array.isArray(tr.pts) && tr.pts.length >= 2 && tr.pts.every(pt))
-      .map(tr => ({ id: num(tr.id, 0), kind: tr.kind, pts: tr.pts.map(p => [Number(p[0]), Number(p[1])]), realLen: Number(tr.realLen) > 0 ? Number(tr.realLen) : null }));
+      .filter(tr => tr && ['line', 'curve', 'path'].includes(tr.kind) && Array.isArray(tr.pts) && tr.pts.length >= (tr.kind === 'curve' ? 3 : 2) && tr.pts.every(pt))
+      .map(tr => {
+        const id = num(tr.id, 0), len = Number(tr.len) > 0 ? Number(tr.len) : null;
+        if (!len && Number(tr.realLen) > 0) legacyLens.push([id, Number(tr.realLen)]);
+        return { id, kind: tr.kind, pts: tr.pts.map(p => [Number(p[0]), Number(p[1])]), a: num(tr.a, -1), b: num(tr.b, -1), len };
+      });
   }
-  const trechoIds = new Set(t.trechos.map(tr => tr.id));
   if (Array.isArray(c.trilhos)) {
     t.trilhos = c.trilhos
       .filter(tl => tl && Array.isArray(tl.trechos))
-      .map(tl => ({ id: num(tl.id, 0), name: String(tl.name ?? 'Trilho'), color: /^#[0-9a-f]{6}$/i.test(tl.color) ? tl.color : '#38bdf8', trechos: tl.trechos.map(Number).filter(id => trechoIds.has(id)), closed: !!tl.closed }))
-      .filter(tl => tl.trechos.length);
+      .map(tl => ({ id: num(tl.id, 0), name: String(tl.name ?? 'Trilho'), color: /^#[0-9a-f]{6}$/i.test(tl.color) ? tl.color : '#38bdf8', trechos: tl.trechos.map(Number), rev: !!tl.rev }));
   }
-  const trilhoIds = new Set(t.trilhos.map(tl => tl.id));
   if (Array.isArray(c.agvs)) {
     t.agvs = c.agvs.filter(a => a && typeof a === 'object').map(a => ({
       id: num(a.id, 0),
       name: String(a.name ?? 'AGV'),
-      trilhoId: trilhoIds.has(Number(a.trilhoId)) ? Number(a.trilhoId) : null,
+      trilhoId: a.trilhoId === null || a.trilhoId === undefined ? null : num(a.trilhoId, null),
       s0: Math.max(0, num(a.s0, 0)),
       speed: Math.max(0, num(a.speed, 30)),
       dir: Number(a.dir) < 0 ? -1 : 1,
       endMode: ['stop', 'pingpong', 'loop'].includes(a.endMode) ? a.endMode : 'stop',
       delay: Math.max(0, num(a.delay, 0)),
-      orient: a.orient === 'long' ? 'long' : 'trans',
       x: num(a.x, 0), y: num(a.y, 0), angle: num(a.angle, 0)
     }));
   }
@@ -5671,8 +6249,11 @@ function mergeAgvConfig(t, c) {
     t.view = { cx: num(c.view.cx, 0), cy: num(c.view.cy, 0), zoom: Math.min(300, Math.max(0.3, num(c.view.zoom, 6))) };
   }
   if (Number.isFinite(Number(c.duration))) t.duration = Math.min(7200, Math.max(10, Number(c.duration)));
-  const maxId = Math.max(0, ...t.trechos.map(o => o.id), ...t.trilhos.map(o => o.id), ...t.agvs.map(o => o.id));
+  const maxId = Math.max(0, ...[t.nodes, t.trechos, t.trilhos, t.agvs].flatMap(list => list.map(o => o.id)));
   t.nextId = Math.max(num(c.nextId, 1), maxId + 1);
+  AgvModel.repair(t, legacyLens);
+  const trilhoIds = new Set(t.trilhos.map(tl => tl.id));
+  t.agvs.forEach(a => { if (!trilhoIds.has(a.trilhoId)) a.trilhoId = null; });
 }
 
 /** Aplica uma configuração e reconstrói a interface. @returns {boolean} aplicada */
@@ -5950,6 +6531,7 @@ const ACTIONS = {
   agvZoomIn: () => AgvFlow.zoomIn(),
   agvZoomOut: () => AgvFlow.zoomOut(),
   agvFit: () => AgvFlow.fit(),
+  agvNewTrilho: () => AgvFlow.newTrilho(),
   agvPlay: () => AgvFlow.togglePlay(),
   agvRestart: () => AgvFlow.restart(),
   engClearSheet: () => Engagement.clearSheet()

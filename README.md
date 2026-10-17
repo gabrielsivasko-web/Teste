@@ -104,24 +104,33 @@ Tudo fica salvo no PC e vai junto no `.json` exportado (`engCfg`).
 ## Página Fluxo de AGVs
 
 Terceira opção do título. Uma área com **grade de 10 m por quadrado**, zoom (roda do mouse, ＋/－, ⤢ Ajustar) e vista
-móvel (arrastar o fundo ou ✋ Mover):
+móvel (arrastar o fundo ou ✋ Vista). **O desenho é sempre em escala.**
 
 - **Ferramentas de desenho:** ／ Linha (Shift = ângulos de 15°), ⌒ Curva (arrasta do início ao fim, solta, curva com o
   mouse e clica) e ✎ Lápis (à mão livre; ao soltar, o traço é simplificado e suavizado seguindo o caminho feito).
-- **Trilhos e trechos:** cada traço é um trecho. Começar ou terminar um traço na ponta de um trilho (círculo branco)
-  emenda; ligar o fim ao começo fecha o **circuito**. Trilhos podem se cruzar. Ao selecionar um trecho informa-se
-  **quantos metros ele representa** (o "*" no rótulo indica comprimento definido) — vale para o tempo de percurso.
-- **AGV (0,80 × 1,50 m):** clicado sobre um trilho, prende-se a ele e só anda sobre o caminho. Clicando nele:
-  velocidade (m/min), sentido (direita/esquerda dele), posição inicial, partida (s), comportamento no fim do trilho
-  (para, vai e volta, recomeça) e posição (atravessado ou comprido no sentido do trilho). Gira acompanhando o trilho
-  com o eixo no meio do AGV.
-- **Cores:** cada trilho tem uma cor (editável na tabela) e os AGVs ligados a ele usam a mesma cor.
+- **Comprimento dos trechos:** cada traço é um trecho. Selecionado, informa-se o **comprimento (m)** e o desenho se
+  ajusta à medida (duas linhas iguais definidas como 5 m e 10 m ficam com 5 m e 10 m). O que está ligado acompanha:
+  o lado que se desloca anda inteiro e, num circuito, estica o trecho mais adequado (reto, paralelo ao ajuste e sem
+  medida definida) — um retângulo continua retângulo. O "*" marca medida definida; "⚠", medida que outra edição mudou.
+- **Ligações e desvios:** começar ou terminar um traço numa ponta (○) continua o trilho; ligar o fim ao começo fecha o
+  **circuito**; ligar as pontas de dois trilhos une os dois. Começar ou terminar **no meio de um trecho** (◇) cria um
+  **desvio**: o trecho é dividido ali e o traço novo vira um trilho. Trilhos podem só se cruzar, sem ligação.
+- **Caminho dos trilhos:** cada trilho tem uma cor e é o caminho que os seus AGVs seguem. Trilhos podem dividir
+  trechos: em ✎ Caminho (tabela ou painel do trilho) clica-se nos trechos para acrescentar numa ponta ou tirar da ponta
+  — assim um trilho entra num desvio e volta para o circuito. ➕ Novo trilho monta um caminho do zero; ⇄ Inverter
+  sentido troca o sentido do trilho. Num trecho dividido, as cores aparecem lado a lado.
+- **✥ Mover trilho:** arrastar uma ponta (□) a reposiciona — solta sobre outra ponta ou trecho, liga; arrastar um
+  trecho move o trilho inteiro com o que está ligado nele.
+- **AGV (0,80 × 1,50 m, comprido no trilho):** clicado sobre um trilho, prende-se a ele e só anda sobre o caminho; a
+  ferramenta volta para Selecionar (Shift+clique coloca vários). Clicando nele: velocidade (m/min), sentido (no sentido
+  do trilho ou contra), posição inicial, partida (s) e comportamento no fim do trilho (para, vai e volta, recomeça).
+  Gira acompanhando o trilho com o eixo no meio do AGV; ao editar a rede, continua no mesmo ponto do seu trecho.
 - **Colisões:** todos os AGVs são simulados no horizonte escolhido (passo de 0,1 s) e cada contato entre dois AGVs é
   listado com instante, duração e local; clicar leva ao momento da colisão. ▶ Simular anima o fluxo.
 - ↶ Desfazer / Ctrl+Z, Delete apaga o selecionado, Esc cancela. Tudo fica salvo no PC e no `.json` (`agvCfg`).
 
-Observação: a posição desenhada é a usada para detectar colisões; o comprimento real de um trecho muda só o tempo
-de percurso. Para colisões fiéis, desenhe em escala (a grade tem 10 m por quadrado).
+No código, `AgvModel` é a rede (nós, trechos, trilhos e as operações de edição, sem DOM) e `AgvFlow` a página.
+Arquivos da versão anterior abrem convertidos: o "representa X m" vira o comprimento do desenho.
 
 ## Observação sobre a proteção
 

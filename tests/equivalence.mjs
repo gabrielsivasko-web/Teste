@@ -1025,16 +1025,34 @@ async function agvCheck(browser) {
   const refresh = async () => { await page.locator('#agvCanvas').scrollIntoViewIfNeeded(); box = await page.locator('#agvCanvas').boundingBox(); };
   const at = (x, y) => [box.x + box.width / 2 + x, box.y + box.height / 2 + y];   // px a partir do centro (0,0 m; 6 px/m)
   const tool = async t => {
-    await refresh();
-    const y0 = box.y;
+    await page.locator('#agvTools').scrollIntoViewIfNeeded();
+    const y0 = (await page.locator('#agvCanvas').boundingBox()).y;
     await page.locator(`#agvTools [data-arg="${t}"]`).click();
+    const y1 = (await page.locator('#agvCanvas').boundingBox()).y;
+    expect(Math.abs(y1 - y0) < 0.5, `trocar para "${t}" moveu o desenho ${y1 - y0}px`);
     await refresh();
-    expect(Math.abs(box.y - y0) < 0.5, `trocar para "${t}" moveu o desenho ${box.y - y0}px`);
   };
   const stroke = async (a, b) => { await page.mouse.move(...at(...a)); await page.mouse.down(); await page.mouse.move(...at(...b), { steps: 6 }); await page.mouse.up(); };
   const field = name => page.locator(`#agvPanel label:has(span:text-is("${name}"))`);
   const set = async (name, v) => { const i = field(name).locator('input'); await i.fill(String(v)); await i.press('Enter'); };
   const trilhos = () => page.evaluate(() => Array.from(document.querySelectorAll('#agvTrilhoBody tr')).map(tr => Array.from(tr.children).slice(2, 6).map(td => td.textContent).join('|')));
+
+  const cfgNow = () => page.evaluate(k => JSON.parse(localStorage.getItem(k)).config.agvCfg, STORAGE_KEY);
+  const lenOf = t => t.pts.reduce((acc, q, i) => (i ? acc + Math.hypot(q[0] - t.pts[i - 1][0], q[1] - t.pts[i - 1][1]) : 0), 0);
+  const activeTool = () => page.evaluate(() => (document.querySelector('#agvTools .active') || {}).dataset?.arg);
+
+  // duas linhas iguais (20 m): uma definida como 5 m e outra como 10 m — o desenho se ajusta
+  await tool('line');
+  await stroke([-300, -250], [-180, -250]);
+  await stroke([-300, -220], [-180, -220]);
+  await tool('select');
+  await page.mouse.click(...at(-240, -250));
+  await set('Comprimento (m)', 5);
+  await refresh();
+  await page.mouse.click(...at(-280, -220));
+  await set('Comprimento (m)', 10);
+  let net = await cfgNow();
+  expect(net.trechos.map(t => lenOf(t).toFixed(2)).join(',') === '5.00,10.00', `linhas de 5 e 10 m: ${net.trechos.map(lenOf)}`);
 
   await tool('line');
   await stroke([-300, -120], [300, -120]);
@@ -1047,26 +1065,59 @@ async function agvCheck(browser) {
   for (let i = 0; i <= 30; i++) await page.mouse.move(...at(-400 + i * 25, 200 + Math.sin(i / 4) * 40));
   await page.mouse.up();
   let tl = await trilhos();
-  expect(tl[0] === '4|280,0 m|Circuito|0', `circuito de 4 linhas: ${tl[0]}`);
-  expect(tl.length === 2 && tl[1].endsWith('|Aberto|0'), `traço do lápis: ${tl[1]}`);
-  const pencilPts = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).config.agvCfg.trechos.at(-1), STORAGE_KEY);
+  expect(tl[2] === '4|280,0 m|Circuito|0', `circuito de 4 linhas: ${tl[2]}`);
+  expect(tl.length === 4 && tl[3].endsWith('|Aberto|0'), `traço do lápis: ${tl[3]}`);
+  const pencilPts = (await cfgNow()).trechos.at(-1);
   expect(pencilPts.kind === 'path' && pencilPts.pts.length < 31, `lápis suavizado: ${pencilPts.kind}, ${pencilPts.pts.length} pontos`);
 
+  // AGV: um clique coloca um só e a ferramenta volta para Selecionar; fora de um trilho não cria
   await tool('agv');
   await page.mouse.click(...at(-100, -120));
+  expect(await activeTool() === 'select', `depois de colocar o AGV a ferramenta é ${await activeTool()}`);
+  await tool('agv');
   await page.mouse.click(...at(100, -120));
+  await tool('agv');
+  await page.mouse.click(...at(0, 300));
+  expect((await cfgNow()).agvs.length === 2, `AGVs criados: ${(await cfgNow()).agvs.length}`);
   await tool('select');
   await page.locator('#agvAgvBody tr:nth-child(2)').click();
   await field('Sentido').locator('select').selectOption('-1');
   await set('Velocidade (m/min)', 40);
+  // lado de baixo do retângulo 100 × 40 m passa a 25 m: continua retângulo (25 × 40)
   await refresh();
   await page.mouse.click(...at(0, 120));
-  await set('Representa (m)', 25);
+  await set('Comprimento (m)', 25);
   tl = await trilhos();
-  expect(tl[0] === '4|205,0 m|Circuito|2', `trecho representa 25 m: ${tl[0]}`);
+  expect(tl[2] === '4|130,0 m|Circuito|2', `trecho de 25 m: ${tl[2]}`);
+  net = await cfgNow();
+  const square = net.trechos.slice(2, 6).every(t => Math.abs(t.pts[0][0] - t.pts[1][0]) < 1e-6 || Math.abs(t.pts[0][1] - t.pts[1][1]) < 1e-6);
+  expect(square, 'o circuito deveria continuar com lados retos (retângulo)');
   await page.waitForFunction(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 5000 }).catch(() => {});
   const nCol = await page.evaluate(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length);
   expect(nCol >= 1, `AGVs em sentidos opostos no circuito devem colidir: ${nCol}`);
+
+  // desvio: linha saindo do meio do lado de cima (x 25…50 m) e caminho do trilho novo passando pelo circuito
+  await tool('line');
+  await stroke([240, -120], [240, -220]);
+  tl = await trilhos();
+  expect(tl.length === 5 && tl[2].startsWith('5|130,0 m|Circuito') && tl[4] === '1|16,7 m|Aberto|0', `desvio: ${tl}`);
+  await page.locator('#agvTrilhoBody tr:last-child button:has-text("✎")').click();
+  await refresh();
+  await page.mouse.click(...at(280, -120));
+  await page.keyboard.press('Enter');
+  tl = await trilhos();
+  expect(tl[4] === '2|26,7 m|Aberto|0', `caminho do desvio pelo circuito: ${tl[4]}`);
+
+  // mover: a ponta solta do desvio vai 10 m para a direita
+  await tool('move');
+  await page.mouse.move(...at(240, -220));
+  await page.mouse.down();
+  await page.mouse.move(...at(300, -220), { steps: 5 });
+  await page.mouse.up();
+  net = await cfgNow();
+  expect(net.nodes.some(n => Math.abs(n.x - 50) < 1e-6 && Math.abs(n.y + 36.667) < 1e-3), 'a ponta do desvio deveria ir para (50; −36,7)');
+  await tool('select');
+  tl = await trilhos();
 
   await page.mouse.move(...at(0, 0));
   await page.mouse.wheel(0, -400);
@@ -1077,8 +1128,7 @@ async function agvCheck(browser) {
   await page.selectOption('#appViewSelect', 'agv');
   await page.waitForFunction(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 5000 }).catch(() => {});
   expect(await page.evaluate(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length) === nCol, 'colisões após recarregar');
-  tl = await trilhos();
-  expect(tl.length === 2 && tl[0] === '4|205,0 m|Circuito|2', `após recarregar: ${tl}`);
+  expect(JSON.stringify(await trilhos()) === JSON.stringify(tl), `após recarregar: ${await trilhos()}`);
   expect(!errors.length, `erros: ${errors.join('; ')}`);
   await ctx.close();
   return problems;
@@ -1172,7 +1222,7 @@ try {
     checks++;
     const problems = await agvCheck(browser);
     problems.forEach(pb => fail('agv', pb));
-    log(`  ${problems.length ? '·' : '✔'} Página Fluxo de AGVs (desenho, circuito, AGVs, comprimento real, colisões, zoom, memória)`);
+    log(`  ${problems.length ? '·' : '✔'} Página Fluxo de AGVs (desenho, comprimentos em escala, desvios, caminhos, mover, AGVs, colisões, memória)`);
   }
 
   log('Cenários roteirizados');
