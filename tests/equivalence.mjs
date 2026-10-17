@@ -29,7 +29,7 @@ const newSrc = fs.readFileSync(NEW_FILE, 'utf8');
 const HOOK_MARK = '\nboot();\n})();';
 if (!newSrc.includes(HOOK_MARK)) throw new Error('Marcador de inicialização não encontrado na versão nova');
 const NEW_HOOKED = path.join(tmpDir, 'new.html');
-fs.writeFileSync(NEW_HOOKED, newSrc.replace(HOOK_MARK, '\nboot();\nwindow.__ME1__ = { config, ui, playback, getResults: () => results };\n})();'));
+fs.writeFileSync(NEW_HOOKED, newSrc.replace(HOOK_MARK, '\nboot();\nwindow.__ME1__ = { config, ui, playback, getResults: () => results, serialize: serializeConfig };\n})();'));
 // ── Referência = v10 + as mesmas correções de bugs, como remendos mínimos (cada um deve casar exatamente 1 vez) ──
 const REFERENCE_FIXES = [
   { // 1. "Excluir" apaga o item do próprio cartão, mesmo depois de a lista ser reordenada
@@ -58,10 +58,83 @@ const REFERENCE_FIXES = [
     find: 'Math.max(0.01, pc.entry_dist || 2)', replace: "Math.max(0.01, typeof pc.entry_dist === 'number' ? pc.entry_dist : 2)" },
   { find: 'Math.max(0.01, pc.exit_dist || 4)', replace: "Math.max(0.01, typeof pc.exit_dist === 'number' ? pc.exit_dist : 4)" },
   { // 6. Linha do Ponto 0 da Servant sempre com 2 px (antes herdava 2 ou 5 px do desenho anterior)
-    find: '    ctx.setLineDash([3, 3]);', replace: '    ctx.lineWidth = 2;\n    ctx.setLineDash([3, 3]);' }
+    find: '    ctx.setLineDash([3, 3]);', replace: '    ctx.lineWidth = 2;\n    ctx.setLineDash([3, 3]);' },
+
+  // ── Ajustes pedidos depois da refatoração ──
+  { // A. Faixas dos passes desenhadas por último (na frente da plataforma), com fundo opaco
+    apply: src => {
+      const start = src.indexOf('  // Faixas dos passes (parte inferior do canvas)\n');
+      const end = src.indexOf('  // Trajeto da plataforma móvel');
+      if (start < 0 || end < start) throw new Error('bloco das faixas dos passes não encontrado');
+      const block = src.slice(start, end).replace("      ctx.fillStyle = i % 2 ?", "      ctx.fillStyle = '#0d1017';\n      ctx.fillRect(xa, pbY, xb - xa, 11);\n      ctx.fillStyle = i % 2 ?");
+      const anchor = "  const isMin = state.unit === 'min';\n  const badges = getCachedBadges();";
+      if (src.split(anchor).length !== 2) throw new Error('fim do drawCanvas não encontrado');
+      return (src.slice(0, start) + src.slice(end)).replace(anchor, () => block + anchor);
+    } },
+  { // B. "Parâmetros Operacionais" e "Passes de Operação" começam fechados
+    find: 'openPanels: { sizes: false, ops: true, plat: false, serv: false, pass: true },', replace: 'openPanels: { sizes: false, ops: false, plat: false, serv: false, pass: false },' },
+  { find: '<span class="collapse-chevron" id="chev_ops">▼</span>', replace: '<span class="collapse-chevron" id="chev_ops">▶</span>' },
+  { find: 'border-color:rgba(96,165,250,0.35);">Clique para ocultar</span>', replace: 'border-color:rgba(96,165,250,0.35);">Clique para expandir</span>' },
+  { find: '<div class="collapsible-body" id="body_ops" style="display:block;">', replace: '<div class="collapsible-body" id="body_ops" style="display:none;">' },
+  { find: '<span class="collapse-chevron" id="chev_pass" style="color:var(--amber);">▼</span>', replace: '<span class="collapse-chevron" id="chev_pass" style="color:var(--amber);">▶</span>' },
+  { find: 'style="font-size:10px; color:var(--muted); border-color:rgba(245,158,11,0.35);">Clique para ocultar</span>', replace: 'style="font-size:10px; color:var(--amber); border-color:rgba(245,158,11,0.35);">Clique para expandir</span>' },
+  { find: '<div class="collapsible-body" id="body_pass" style="display:block;">', replace: '<div class="collapsible-body" id="body_pass" style="display:none;">' },
+  { // C. Espaçamento de Disparo (E0) único para todos os carros (state.global.E0)
+    find: '    Hmax: 1.50\n  },\n  lengths:', replace: '    Hmax: 1.50,\n    E0: 4.6\n  },\n  lengths:' },
+  { find: 'createSliderBox(e0Def, activeCfg,', replace: 'createSliderBox(e0Def, state.global,' },
+  { find: 'waitingCar.cfg.E0', replace: 'g.E0' },
+  { find: '      carsCfg: JSON.parse(JSON.stringify(state.carsCfg)),',
+    replace: '      carsCfg: Object.fromEntries(Object.entries(JSON.parse(JSON.stringify(state.carsCfg))).map(([k, v]) => [k, { E0: state.global.E0, ...v, E0: state.global.E0 }])),' },
+  { find: "    if (typeof cfg.global.Hmax === 'number') state.global.Hmax = cfg.global.Hmax;\n  }",
+    replace: "    if (typeof cfg.global.Hmax === 'number') state.global.Hmax = cfg.global.Hmax;\n    if (typeof cfg.global.E0 === 'number') state.global.E0 = cfg.global.E0;\n  }\n" +
+      "  if (!(cfg.global && typeof cfg.global.E0 === 'number') && cfg.carsCfg) { const lg = ['C2', 'C3', 'C1'].map(k => cfg.carsCfg[k]).find(c => c && typeof c.E0 === 'number'); if (lg) state.global.E0 = lg.E0; }" },
+  { // D. Seletor do carro em configuração + "Replicar configuração de"
+    find: `      <button class="btn active" id="cfgTab_C2" onclick="event.stopPropagation(); setCfgTab('C2', true)">XDF (Atrás de XDF)</button>
+      <button class="btn" id="cfgTab_C1" onclick="event.stopPropagation(); setCfgTab('C1', true)">X62</button>
+      <button class="btn" id="cfgTab_C3" onclick="event.stopPropagation(); setCfgTab('C3', true)">XDF (Atrás de X62)</button>`,
+    replace: `      <select class="btn active btn-select" id="cfgTabSelect" onclick="event.stopPropagation()" onchange="setCfgTab(this.value, true)" title="Escolha o carro que quer configurar">
+        <option value="C2">XDF (Atrás de XDF)</option>
+        <option value="C1">X62</option>
+        <option value="C3">XDF (Atrás de X62)</option>
+      </select>` },
+  { find: '      <button class="btn btn-mem" onclick="addTrecho()" title="Insere um novo trecho com parada ou mudança de velocidade/altura na linha">➕ Adicionar Trecho / Parada</button>',
+    replace: `      <div class="btn-group">
+        <span class="replicate-label">⧉ Replicar configuração de:</span>
+        <select class="btn btn-select" id="replicateFromSelect" title="Carro cujos trechos (posições, velocidades, alturas e paradas) serão copiados para o carro em configuração"></select>
+        <button class="btn-mem btn-mem-blue" onclick="replicateTrechos()" title="Copia os trechos do carro escolhido para o carro em configuração (substitui os atuais)">Replicar</button>
+        <button class="btn btn-mem" onclick="addTrecho()" title="Insere um novo trecho com parada ou mudança de velocidade/altura na linha">➕ Adicionar Trecho / Parada</button>
+      </div>` },
+  { find: '  select.btn { appearance: none; padding-right: 22px; }',
+    replace: `  select.btn { appearance: none; padding-right: 22px; }
+  .btn.btn-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2393c5fd'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; padding-right: 26px; }
+  .btn-select option { background: var(--card-inner); color: var(--text); }
+  .replicate-label { font-size: 11px; color: var(--muted); }` },
+  { find: `  ['C2', 'C1', 'C3'].forEach(k => {
+    document.getElementById('cfgTab_' + k).classList.toggle('active', k === t);
+  });
+`, replace: '' },
+  { find: "  document.getElementById('activeCarConfigTitle').textContent = titles[tab];",
+    replace: `  document.getElementById('activeCarConfigTitle').textContent = titles[tab];
+  document.getElementById('cfgTabSelect').value = tab;
+  const __from = document.getElementById('replicateFromSelect');
+  __from.innerHTML = '';
+  ['C2', 'C1', 'C3'].filter(k => k !== tab).forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = __LBL[k]; __from.appendChild(o); });` },
+  { find: 'function removeTrecho(idx) {',
+    replace: `const __LBL = { C2: 'XDF (Atrás de XDF)', C1: 'X62', C3: 'XDF (Atrás de X62)' };
+function replicateTrechos() {
+  const src = document.getElementById('replicateFromSelect').value;
+  if (!src || src === state.cfgTab) return;
+  state.carsCfg[state.cfgTab].trechos = JSON.parse(JSON.stringify(state.carsCfg[src].trechos || []));
+  buildParamControls();
+  runSimulation(true);
+  showMemToast(\`✓ Configuração de \${__LBL[src]} replicada em \${__LBL[state.cfgTab]}\`);
+}
+
+function removeTrecho(idx) {` }
 ];
 let refSrc = fs.readFileSync(REF_FILE, 'utf8');
-for (const { find, replace } of REFERENCE_FIXES) {
+for (const { find, replace, apply } of REFERENCE_FIXES) {
+  if (apply) { refSrc = apply(refSrc); continue; }
   const count = refSrc.split(find).length - 1;
   if (count !== 1) throw new Error(`Remendo da referência casou ${count} vezes: ${find}`);
   refSrc = refSrc.replace(find, () => replace);
@@ -77,13 +150,13 @@ const READ_INTERNALS = {
     playback: { simTime: state.simTime, loopStart: state.loopStart, loopEnd: state.loopEnd, playing: state.playing },
     ui: { cfgTab: state.cfgTab, servTab: state.servTab, openPanels: state.openPanels, selectedLogKey: state.selectedLogKey,
           tableMode: state.tableMode, hourlyBase: state.hourlyBase, passRelease: state.passRelease },
-    config: Object.fromEntries(${JSON.stringify(PERSISTED)}.map(k => [k, state[k]]))
+    config: getSerializableConfig().config
   }))()`,
   new: `(() => { const r = __ME1__.getResults(); return {
     frames: r.frames, logsByProfile: r.logsByProfile, logsByCarIdx: r.logsByCarIdx, hourly: r.hourly,
     passByProfile: r.passByProfile, passByIdx: r.passByIdx,
     playback: { ...__ME1__.playback }, ui: __ME1__.ui,
-    config: Object.fromEntries(${JSON.stringify(PERSISTED)}.map(k => [k, __ME1__.config[k]]))
+    config: __ME1__.serialize().config
   }; })()`
 };
 const SET_SIMTIME = {
@@ -593,7 +666,7 @@ const SCENARIOS = {
   },
 
   async trechos(s) {
-    await s.click('#cfgTab_C1');
+    await s.selectOption('#cfgTabSelect', 'C1');
     await s.clickText('Adicionar Trecho');
     await s.checkpoint('trecho adicionado (X62)');
     await s.setNumber(F.trecho(2, 1), 33, { input: false });
@@ -604,13 +677,16 @@ const SCENARIOS = {
     await s.checkpoint('altura na parada com transição');
     await s.click(F.trechoDel(1));
     await s.checkpoint('trecho removido');
-    await s.click('#cfgTab_C3');
+    await s.selectOption('#cfgTabSelect', 'C3');
     await s.click(F.trechoDel(4));
     await s.click(F.trechoDel(3));
     await s.click(F.trechoDel(2));
     await s.checkpoint('XDF←X62 com 1 trecho');
+    await s.selectOption('#replicateFromSelect', 'C1');
+    await s.clickText('Replicar');
+    await s.checkpoint('replicado do X62');
     await s.click('#hint_ops');
-    await s.click('#cfgTab_C2');
+    await s.selectOption('#cfgTabSelect', 'C2');
     await s.checkpoint('aba reabre o painel');
   },
 
@@ -739,6 +815,7 @@ const tableRanges = page => page.evaluate(() => Array.from(document.querySelecto
 const BUG_CHECKS = {
   async 'Excluir após reordenar apaga o item certo'(browser, file) {
     const { page, ctx } = await openPlain(browser, file);
+    await page.evaluate(() => { const b = document.getElementById('body_ops'); if (b.hidden || b.style.display === 'none') document.getElementById('chev_ops').click(); });
     await commitNumber(page, F.trecho(1, 1), 30);   // 1º trecho (7,6 m) vai para 30 m
     await page.locator(F.trechoDel(1)).click();       // e é excluído pelo botão do próprio cartão
     const ends = await page.evaluate(() => Array.from(document.querySelectorAll('#carTrechosContainer .trecho-badge-title'))

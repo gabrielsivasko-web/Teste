@@ -70,6 +70,16 @@ node tests/equivalence.mjs --only=passes --fuzz=0   # um cenário
 6. **Linha tracejada do Ponto 0 da Servant** saía com 5 px em vez de 2 px quando não havia cota de folga desenhada
    (ex.: no instante t = 0). Agora é sempre 2 px.
 
+## Ajustes pedidos depois da refatoração
+
+- **Faixas dos passes** ("XDF Passe 1", …) ficam na frente da plataforma e de tudo mais no desenho da simulação.
+- **"Parâmetros Operacionais" e "Passes de Operação"** abrem fechados, como os demais painéis.
+- **Espaçamento de Disparo (E0)** é um valor único para todos os carros, como Dmin, Dff e Hmax. Ao abrir uma
+  configuração antiga (E0 por carro), vale o E0 do XDF (Atrás de XDF). O `.json` exportado continua trazendo o E0 em
+  cada carro, então segue abrindo certo na v10.
+- **Seletor do carro em configuração** no lugar dos três botões, e **"⧉ Replicar configuração de"**: copia os trechos
+  (posições, velocidades, alturas e paradas) de outro carro para o que está sendo configurado.
+
 ## Observação sobre a proteção
 
 A senha do download não fica mais em texto puro (agora é comparada por SHA-256), mas é uma barreira de uso casual:

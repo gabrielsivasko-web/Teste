@@ -84,6 +84,10 @@
   .st-lim { color: var(--amber); }
   .st-danger { color: var(--red); font-weight: 700; }
   select.btn { appearance: none; padding-right: 22px; }
+  /* Seletor com seta (escolha do carro em configuração / origem da réplica) */
+  .btn.btn-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2393c5fd'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; padding-right: 26px; }
+  .btn-select option { background: var(--card-inner); color: var(--text); }
+  .replicate-label { font-size: 11px; color: var(--muted); }
   .collapsible-header { cursor: pointer; user-select: none; padding: 2px 0; transition: opacity 0.15s; }
   .collapsible-header:hover { opacity: 0.92; }
   .collapse-chevron { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: var(--card-inner); border: 1px solid var(--border); color: var(--accent-light); font-size: 10px; transition: transform 0.2s ease, background 0.15s; }
@@ -153,7 +157,7 @@
   .badge-red { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
   .badge-amber { color: var(--amber); border-color: rgba(245,158,11,0.35); }
   .badge-hint { font-size: 10px; color: var(--accent-light); border-color: rgba(96,165,250,0.35); }
-  .badge-hint.hint-amber { color: var(--muted); border-color: rgba(245,158,11,0.35); }
+  .badge-hint.hint-amber { color: var(--amber); border-color: rgba(245,158,11,0.35); }
   .badge-hint.hint-cyan { color: var(--cyan); border-color: rgba(56,189,248,0.35); }
   .badge-hint.hint-purple { color: var(--purple); border-color: rgba(168,85,247,0.35); }
   .badge-xs { padding: 2px 6px; }
@@ -415,21 +419,28 @@
 <div class="card">
   <div class="row-between collapsible-header" data-action="toggleSection" data-arg="ops" title="Clique para mostrar ou ocultar Parâmetros Operacionais">
     <div class="cluster">
-      <span class="collapse-chevron" id="chev_ops">▼</span>
+      <span class="collapse-chevron" id="chev_ops">▶</span>
       <span class="section-label section-title">Parâmetros Operacionais Dinâmicos (Criar / Excluir Paradas, Velocidades e Alturas)</span>
-      <span class="badge badge-hint" id="hint_ops">Clique para ocultar</span>
+      <span class="badge badge-hint" id="hint_ops">Clique para expandir</span>
     </div>
     <div class="btn-group">
-      <button class="btn active" id="cfgTab_C2" data-action="setCfgTab" data-arg="C2">XDF (Atrás de XDF)</button>
-      <button class="btn" id="cfgTab_C1" data-action="setCfgTab" data-arg="C1">X62</button>
-      <button class="btn" id="cfgTab_C3" data-action="setCfgTab" data-arg="C3">XDF (Atrás de X62)</button>
+      <select class="btn active btn-select" id="cfgTabSelect" data-action="noop" title="Escolha o carro que quer configurar">
+        <option value="C2">XDF (Atrás de XDF)</option>
+        <option value="C1">X62</option>
+        <option value="C3">XDF (Atrás de X62)</option>
+      </select>
     </div>
   </div>
 
-  <div class="collapsible-body" id="body_ops">
+  <div class="collapsible-body" id="body_ops" hidden>
     <div class="row-between mb-8">
       <div class="section-label text-accent m-0" id="activeCarConfigTitle">Janela de Configuração: XDF (Atrás de XDF)</div>
-      <button class="btn btn-mem" data-action="addTrecho" title="Insere um novo trecho com parada ou mudança de velocidade/altura na linha">➕ Adicionar Trecho / Parada</button>
+      <div class="btn-group">
+        <span class="replicate-label">⧉ Replicar configuração de:</span>
+        <select class="btn btn-select" id="replicateFromSelect" title="Carro cujos trechos (posições, velocidades, alturas e paradas) serão copiados para o carro em configuração"></select>
+        <button class="btn-mem btn-mem-blue" data-action="replicateTrechos" title="Copia os trechos do carro escolhido para o carro em configuração (substitui os atuais)">Replicar</button>
+        <button class="btn btn-mem" data-action="addTrecho" title="Insere um novo trecho com parada ou mudança de velocidade/altura na linha">➕ Adicionar Trecho / Parada</button>
+      </div>
     </div>
 
     <div class="section-label text-amber mt-4">1. Controle de Entrada, Segurança e Limite de Altura Operacional</div>
@@ -444,9 +455,9 @@
 <div class="card card-amber">
   <div class="row-between collapsible-header" data-action="toggleSection" data-arg="pass" title="Clique para mostrar ou ocultar Passes de Operação">
     <div class="cluster">
-      <span class="collapse-chevron text-amber" id="chev_pass">▼</span>
+      <span class="collapse-chevron text-amber" id="chev_pass">▶</span>
       <span class="section-label section-title text-amber">🎯 Passes de Operação (Entrada, Saída, Tempo de Operação e Tolerância no Passe Seguinte)</span>
-      <span class="badge badge-hint hint-amber" id="hint_pass">Clique para ocultar</span>
+      <span class="badge badge-hint hint-amber" id="hint_pass">Clique para expandir</span>
     </div>
     <div class="btn-group">
       <button class="btn active" id="passTab_XDF" data-action="setPassTab" data-arg="XDF">Passes XDF</button>
@@ -456,7 +467,7 @@
       <button class="btn btn-mem" data-action="addPass" title="Adiciona um novo passe ao fim da lista">➕ Adicionar Passe</button>
     </div>
   </div>
-  <div class="collapsible-body" id="body_pass">
+  <div class="collapsible-body" id="body_pass" hidden>
     <div class="info-banner info-banner-amber">
       ℹ️ <b>Lógica dos Passes:</b> <b>XDF e X62 têm passes e tempos independentes</b> (use as abas <i>Passes XDF</i> / <i>Passes X62</i>; o XDF atrás de X62 usa os passes do XDF). Cada passe tem <b>entrada</b>, <b>saída</b> e <b>tempo de operação</b> (você define). O tempo corre enquanto a <b>frente do carro</b> está dentro do passe e o carro está <b>operante</b>; se ele ficar vermelho (altura acima do limite ou Servant embaixo), o tempo <b>pausa</b> e volta quando for liberado. Se a linha <b>travar</b> (carro parado no limite, vermelho, sem como liberar), use <b>Liberar Linha</b>: o tempo desse carro passa a contar mesmo vermelho, ele fica parado até terminar (atraso na linha) e os demais seguem seu ciclo. O carro se move livremente dentro do passe, mas <b>não sai dele antes de o tempo terminar</b>: a frente para no limite = <code>saída + (% permitido × comprimento do carro)</code> e só segue quando o tempo acaba. Tempo 0 = passe sem operação. Ao final, a tabela <b>Balanço de Operação por Passe</b> mostra quanto tempo sobrou ou faltou em cada passe.
     </div>
@@ -638,6 +649,8 @@ const MODEL_OF_PROFILE = { C1: 'X62', C2: 'XDF', C3: 'XDF' };   // C3 = XDF que 
 const MODELS = ['XDF', 'X62'];
 const LOG_TAB_KEYS = ['C1', 'C2', 'C3', 'PLAT_XDF'];
 const SEQ_MODES = ['C2_C1', 'ONLY_C2', 'ONLY_C1'];
+const PROFILE_KEYS = ['C2', 'C1', 'C3'];   // ordem do seletor "carro em configuração"
+const PROFILE_LABELS = { C2: 'XDF (Atrás de XDF)', C1: 'X62', C3: 'XDF (Atrás de X62)' };
 const CFG_TAB_TITLES = {
   C2: 'Janela de Configuração: XDF (Atrás de XDF)',
   C1: 'Janela de Configuração: X62',
@@ -732,7 +745,7 @@ function createDefaultConfig() {
     calcCadencia: 0,
     l4After: 5,
     rngSeed: 12345,
-    global: { C: 5.7, Dmin: 1.30, Dff: 0.00, Hmax: 1.50 },   // C: legado (mantido no arquivo por compatibilidade)
+    global: { C: 5.7, Dmin: 1.30, Dff: 0.00, Hmax: 1.50, E0: 4.6 },   // C: legado (mantido no arquivo por compatibilidade)
     lengths: {
       XDF: { L2: 5.55, L3: 5.70, L4: 6.20 },
       X62: { L2: 5.55, L3: 5.70, L4: 6.20 }
@@ -742,9 +755,9 @@ function createDefaultConfig() {
     // zoom = escala das larguras (%); gap = afastamento da plataforma (espera/saída) além da borda da linha (m)
     view: { auto: true, h: 520, line: 180, zoom: 100, gap: 1.0 },
     carsCfg: {
-      C1: { E0: 4.6, trechos: [makeTrecho(1, 10.0, 2.14, 0), makeTrecho(2, 18.0, 1.10, 0), makeTrecho(3, 26.3, 1.10, 0), makeTrecho(4, 40.0, 1.10, 0)] },
-      C2: { E0: 4.6, trechos: makeXdfTrechos() },
-      C3: { E0: 4.6, trechos: makeXdfTrechos() }
+      C1: { trechos: [makeTrecho(1, 10.0, 2.14, 0), makeTrecho(2, 18.0, 1.10, 0), makeTrecho(3, 26.3, 1.10, 0), makeTrecho(4, 40.0, 1.10, 0)] },
+      C2: { trechos: makeXdfTrechos() },
+      C3: { trechos: makeXdfTrechos() }
     },
     platCfg: {
       enabled: true,
@@ -777,10 +790,9 @@ const PERSISTED_KEYS = Object.freeze(Object.keys(createDefaultConfig()));
 
 /** Esquema de todos os campos com slider (rótulo, limites, passo, unidade e cor de destaque). */
 const FIELDS = {
-  /** @type {FieldDef} */
-  E0: { key: 'E0', label: 'Espaçamento Disparo (E0)', min: 1.3, max: 12.0, step: 0.05, unit: 'm', accent: ACCENT.blue },
-  /** @type {FieldDef[]} */
+  /** @type {FieldDef[]} Controles de entrada e segurança — valem para todos os carros */
   global: [
+    { key: 'E0', label: 'Espaçamento Disparo (E0)', min: 1.3, max: 12.0, step: 0.05, unit: 'm', accent: ACCENT.blue },
     { key: 'Dmin', label: 'Distância Seg. Mínima (Dmin)', min: 0.5, max: 5.0, step: 0.05, unit: 'm', accent: 'rgba(245,158,11,0.4)' },
     { key: 'Dff', label: 'Distância Frente a Frente (Dff)', min: 0.0, max: 20.0, step: 0.05, unit: 'm', accent: 'rgba(56,189,248,0.4)' },
     { key: 'Hmax', label: 'Altura Máx. Operacional (Hmax)', min: 0.2, max: 3.0, step: 0.01, unit: 'm', accent: 'rgba(239,68,68,0.45)' }
@@ -859,7 +871,7 @@ const config = createDefaultConfig();
 const ui = {
   cfgTab: 'C2',
   servTab: 'XDF',
-  openPanels: { sizes: false, ops: true, plat: false, serv: false, pass: true },
+  openPanels: { sizes: false, ops: false, plat: false, serv: false, pass: false },
   selectedLogKey: 'C3',
   tableMode: 'vehicle',
   hourlyBase: 'regime',
@@ -1245,7 +1257,6 @@ class Car {
     this.modelName = modelName;
     this.sizeClass = sizeClass;
     this.len = len;
-    this.E0 = profileCfg.E0;
     this.trechos = trechos;
     this.trechoIdx = 0;
     this.isStopped = false;
@@ -1832,7 +1843,7 @@ function simulate(cfg, { passRelease, servTab }) {
 
     // 1) Entrada do próximo carro (E0 em relação à traseira do último; Dff frente a frente)
     const lastCar = activeCars.length > 0 ? activeCars[activeCars.length - 1] : null;
-    const canByE0 = !lastCar || (lastCar.xFront - lastCar.len) >= waitingCar.E0 - 1e-6;
+    const canByE0 = !lastCar || (lastCar.xFront - lastCar.len) >= g.E0 - 1e-6;
     const canByDff = !lastCar || g.Dff <= 0 || lastCar.xFront >= g.Dff - 1e-6;
     if (canByE0 && canByDff) {
       activeCars.push(waitingCar);
@@ -2224,10 +2235,25 @@ function buildParamControls() {
   renderPlatformPanel();
   renderServantPanel();
   $('activeCarConfigTitle').textContent = CFG_TAB_TITLES[ui.cfgTab];
-  const entryFields = [[FIELDS.E0, config.carsCfg[ui.cfgTab]], ...FIELDS.global.map(def => [def, config.global])];
-  rebuildList($('entrySafetyContainer'), entryFields, ([def, target]) => createRangeField(def, target));
+  renderProfileSelectors();
+  rebuildList($('entrySafetyContainer'), FIELDS.global, def => createRangeField(def, config.global));
   renderPassControls();
   renderTrechosList();
+}
+
+/** Seletor do carro em configuração e lista dos outros carros (origem da réplica). */
+function renderProfileSelectors() {
+  const current = $('cfgTabSelect');
+  if (current) current.value = ui.cfgTab;
+  const from = $('replicateFromSelect');
+  if (!from) return;
+  from.innerHTML = '';
+  PROFILE_KEYS.filter(k => k !== ui.cfgTab).forEach(k => {
+    const opt = document.createElement('option');
+    opt.value = k;
+    opt.textContent = PROFILE_LABELS[k];
+    from.appendChild(opt);
+  });
 }
 
 function renderLengthControls() {
@@ -2882,7 +2908,7 @@ const Renderer = (() => {
     ctx.stroke();
   }
 
-  /** Faixas dos passes do modelo da aba ativa (parte inferior do canvas). */
+  /** Faixas dos passes do modelo da aba ativa (parte inferior do canvas), desenhadas por cima de tudo. */
   function drawPassBands(s) {
     if (!(config.passCfg && config.passCfg.enabled)) return;
     const model = config.passCfg.tab === 'X62' ? 'X62' : 'XDF';
@@ -2895,6 +2921,8 @@ const Renderer = (() => {
       const xa = s.mToX(p.x_in);
       const xb = s.mToX(p.x_out);
       ctx.save();
+      ctx.fillStyle = '#0d1017';   // fundo opaco: nada desenhado embaixo aparece através da faixa
+      ctx.fillRect(xa, pbY, xb - xa, 11);
       ctx.fillStyle = i % 2 ? 'rgba(245,158,11,0.07)' : 'rgba(245,158,11,0.15)';
       ctx.fillRect(xa, pbY, xb - xa, 11);
       ctx.strokeStyle = 'rgba(245,158,11,0.55)';
@@ -3266,17 +3294,17 @@ const Renderer = (() => {
     drawGrid(s);
     drawStopMarkers(s);
     drawMainTrack(s);
-    drawPassBands(s);
     const pathY = drawPlatformTrack(s);
 
     const frames = results.frames;
-    if (!frames.length) return;
+    if (!frames.length) { drawPassBands(s); return; }
     const { drawList, servGeom } = interpolateFrame(frames, playback.simTime);
     const gaps = drawGaps(s, drawList);
     const platTags = drawPlatforms(s, drawList, pathY);
     const servTag = servGeom ? drawServant(s, servGeom) : null;
     drawCars(s, drawList, servGeom);
     drawTags(s, platTags, servTag);
+    drawPassBands(s);   // por último: as faixas dos passes ficam na frente da plataforma e de tudo mais
     updateHud(gaps);
   }
 
@@ -3309,6 +3337,8 @@ const Player = (() => {
 function serializeConfig() {
   const out = {};
   PERSISTED_KEYS.forEach(k => { out[k] = deepClone(config[k]); });
+  // E0 também em cada perfil, como na v10: um arquivo exportado aqui continua abrindo certo na versão antiga
+  Object.keys(out.carsCfg).forEach(k => { out.carsCfg[k] = { E0: config.global.E0, ...out.carsCfg[k] }; });
   return { ...APP_META, exportedAt: new Date().toISOString(), config: out };
 }
 
@@ -3339,7 +3369,12 @@ function mergeConfig(target, cfg) {
   ['speed', 'calcMult', 'calcCadencia', 'l4After', 'rngSeed'].forEach(k => { if (typeof cfg[k] === 'number') target[k] = cfg[k]; });
 
   if (cfg.global) {
-    ['Dmin', 'Dff', 'Hmax'].forEach(k => { if (typeof cfg.global[k] === 'number') target.global[k] = cfg.global[k]; });
+    ['Dmin', 'Dff', 'Hmax', 'E0'].forEach(k => { if (typeof cfg.global[k] === 'number') target.global[k] = cfg.global[k]; });
+  }
+  // Formato antigo: E0 era por perfil (carsCfg.C1/C2/C3.E0). Vira um só, usando o do XDF (aba padrão).
+  if (!(cfg.global && typeof cfg.global.E0 === 'number') && cfg.carsCfg) {
+    const legacy = ['C2', 'C3', 'C1'].map(k => cfg.carsCfg[k]).find(c => c && typeof c.E0 === 'number');
+    if (legacy) target.global.E0 = legacy.E0;
   }
   if (cfg.lengths) {
     MODELS.forEach(m => {
@@ -3365,7 +3400,6 @@ function mergeConfig(target, cfg) {
     ['C1', 'C2', 'C3'].forEach(key => {
       const src = cfg.carsCfg[key];
       if (!src) return;
-      if (typeof src.E0 === 'number') target.carsCfg[key].E0 = src.E0;
       if (Array.isArray(src.trechos)) target.carsCfg[key].trechos = deepClone(src.trechos);
       else if (typeof src.p1_pos === 'number') target.carsCfg[key].trechos = migrateLegacyTrechos(src);
     });
@@ -3496,9 +3530,18 @@ function togglePlay() {
 
 function setCfgTab(tab) {
   ui.cfgTab = tab;
-  setActive('cfgTab_', ['C2', 'C1', 'C3'], tab);
   if (!ui.openPanels.ops) toggleSection('ops', true);
   buildParamControls();
+}
+
+/** Copia os trechos do carro escolhido em "Replicar configuração de" para o carro em configuração. */
+function replicateTrechos() {
+  const source = $('replicateFromSelect').value;
+  if (!source || source === ui.cfgTab) return;
+  config.carsCfg[ui.cfgTab].trechos = deepClone(config.carsCfg[source].trechos || []);
+  buildParamControls();
+  recompute(true);
+  showMemToast(`✓ Configuração de ${PROFILE_LABELS[source]} replicada em ${PROFILE_LABELS[ui.cfgTab]}`);
 }
 
 function addTrecho() {
@@ -3622,7 +3665,8 @@ const ACTIONS = {
     config.rngSeed = Math.floor(Math.random() * 900000) + 100000;
     recompute(false);
   },
-  setCfgTab,
+  noop: () => {},   // controles dentro de cabeçalhos clicáveis (ex.: o seletor de carro não abre/fecha o painel)
+  replicateTrechos,
   addTrecho,
   setPassTab,
   addPass,
@@ -3664,6 +3708,7 @@ function bindActions() {
     if (action) action(el.dataset.arg);
   });
   $('carSelectDropdown').addEventListener('change', e => selectCarIndexLog(e.target.value));
+  $('cfgTabSelect').addEventListener('change', e => setCfgTab(e.target.value));
   $('importParamsInput').addEventListener('change', importParamsFile);
   $('timeScrubber').addEventListener('input', e => { playback.simTime = parseFloat(e.target.value); });
 }
