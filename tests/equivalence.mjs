@@ -1165,6 +1165,24 @@ async function agvCheck(browser) {
     expect(!o.errors.length, `erros: ${o.errors.join('; ')}`);
     await o.ctx.close();
   }
+
+  // paradas programadas: linha de 40 m, paradas em 10 m (30 s) e 20 m (15 s), 30 m/min → percurso de 80 s + 45 s
+  const stopCfg = { agvCfg: {
+    nodes: [{ id: 1, x: 0, y: 0 }, { id: 2, x: 40, y: 0 }],
+    trechos: [{ id: 11, kind: 'line', pts: [[0, 0], [40, 0]], a: 1, b: 2, stops: [{ id: 41, at: 10, cond: { type: 'time', s: 30 } }, { id: 42, at: 20, cond: { type: 'time', s: 15 } }] }],
+    trilhos: [{ id: 21, name: 'Linha', color: '#38bdf8', trechos: [11] }],
+    agvs: [{ id: 31, name: 'AGV 1', trilhoId: 21, s0: 0, speed: 30, dir: 1, endMode: 'stop' }],
+    view: { cx: 20, cy: 0, zoom: 12 }, days: 1, nextId: 50 } };
+  const o = await openPlain(browser, NEW_FILE, stopCfg);
+  await o.page.selectOption('#appViewSelect', 'agv');
+  await o.page.waitForFunction(() => !document.getElementById('agvCollisionBadge').textContent.startsWith('Analisando'), null, { timeout: 30000 });
+  const row = await o.page.evaluate(() => document.querySelector('#agvWaitBody tr').innerText.split('\t'));
+  expect(row[5] === '2' && row[6] === '45,0 s', `paradas programadas no relatório: ${row}`);
+  await o.page.locator('#agvAgvBody tr').first().click();
+  const infoTxt = await o.page.locator('#agvPanel .agv-panel-info').innerText();
+  expect(infoTxt.includes('2 min 05 s'), `percurso previsto com as paradas: ${infoTxt}`);
+  expect(!o.errors.length, `erros: ${o.errors.join('; ')}`);
+  await o.ctx.close();
   return problems;
 }
 
@@ -1256,7 +1274,7 @@ try {
     checks++;
     const problems = await agvCheck(browser);
     problems.forEach(pb => fail('agv', pb));
-    log(`  ${problems.length ? '·' : '✔'} Página Fluxo de AGVs (desenho em escala, desvios, caminhos, mover, AGVs, sensor, prioridade, relatório, memória)`);
+    log(`  ${problems.length ? '·' : '✔'} Página Fluxo de AGVs (desenho em escala, desvios, caminhos, mover, AGVs, sensor, prioridade, paradas, relatório, memória)`);
   }
 
   log('Cenários roteirizados');

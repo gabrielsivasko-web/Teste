@@ -135,14 +135,22 @@ móvel (arrastar o fundo ou ✋ Vista). **O desenho é sempre em escala.**
   espera; frente a frente no mesmo caminho nenhum passa (travamento). Só chegando juntos ao mesmo ponto (ex.: numa
   junção em V) eles podem encostar — é uma colisão no relatório — e mesmo assim um para e o outro passa; nunca seguem
   os dois um por dentro do outro.
-- **Prioridade (só os marcados ★):** o AGV sem prioridade entende que o prioritário está passando ou vai passar no
-  cruzamento / trecho em comum e para antes, com a frente a **pelo menos 2 m** do corpo do prioritário (contorno lilás
-  "⏸ prioridade"); segue quando o prioritário já passou. As zonas são calculadas pela geometria dos trilhos.
+- **Prioridade (só os marcados ★):** pela velocidade, pelo trajeto e pelas paradas programadas, o AGV sem prioridade
+  calcula quando cada um vai ocupar o ponto de encontro (cruzamento, junção, trecho em comum). **Se dá tempo** de
+  passar antes do prioritário, passa sem parar; **se não dá**, para **2 m antes** do ponto (contorno lilás
+  "⏸ prioridade") e segue assim que o prioritário passou e está a uns 2 m — no trecho em comum percorrido no mesmo
+  sentido, não espera ele terminar o trecho (depois, um segue o outro pelo sensor). Os pontos de encontro são
+  calculados pela geometria dos trilhos.
+- **Paradas programadas:** em cada trecho, quantas paradas quiser (ferramenta ⏹ Parada, "➕ Adicionar parada" ou
+  "Distribuir N" iguais), na posição em metros a partir do início do trecho (arrastável no desenho). O AGV para no
+  ponto e sai quando a condição é atendida — por ora, **tempo parado (s)**; o formato já guarda o tipo da condição
+  para as próximas. Num trecho dividido por vários trilhos, escolhe-se para quais a parada vale. O painel do AGV
+  mostra o tempo do percurso completo sem esperas (velocidade + paradas).
 - **Fluxo contínuo:** ▶ Simular anima os AGVs sem reiniciar — cada um segue a sua regra (circuito, vai e volta ou para
   no fim) indefinidamente. O tempo aparece como "Dia N · hh:mm:ss", com **dia de 18 h**; velocidades de 1x a 1800x.
 - **Relatório:** vale só para o **horizonte do relatório (em dias)**. Os AGVs são simulados nesse período, passo a
   passo (0,1 s), com o sensor e a prioridade, em segundo plano. Lista cada **colisão** (dia/hora, duração, local) e,
-  por AGV, as **paradas pelo sensor**, as **esperas por prioridade**, os tempos parados e a situação no fim — inclusive
+  por AGV, as **paradas pelo sensor**, as **esperas por prioridade**, as **paradas programadas**, os tempos e a situação no fim — inclusive
   **travamentos** (parado esperando há mais de 1 min, ex.: dois AGVs frente a frente). Clicar leva ao momento. No
   desenho, um AGV fica vermelho sempre que encosta em outro, mesmo depois do horizonte.
 - ↶ Desfazer / Ctrl+Z, Delete apaga o selecionado, Esc cancela. Tudo fica salvo no PC e no `.json` (`agvCfg`).

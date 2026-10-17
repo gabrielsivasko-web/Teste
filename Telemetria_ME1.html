@@ -164,13 +164,15 @@
   .agv-stage { position: relative; }
   #agvHint { flex: 1 1 320px; max-width: 62%; min-height: 2.8em; display: flex; align-items: center; justify-content: flex-end; text-align: right; line-height: 1.4; }   /* altura fixa: trocar de ferramenta não move o desenho */
   #agvCanvas { height: 620px; touch-action: none; }
-  .agv-panel { position: absolute; top: 18px; right: 8px; width: 280px; max-height: calc(100% - 36px); overflow-y: auto; background: rgba(15,19,28,0.96); border: 1px solid rgba(96,165,250,0.45); border-radius: 10px; padding: 10px 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 7px; font-size: 11px; }
+  .agv-panel { position: absolute; top: 18px; right: 8px; width: 300px; max-height: calc(100% - 36px); overflow-y: auto; background: rgba(15,19,28,0.96); border: 1px solid rgba(96,165,250,0.45); border-radius: 10px; padding: 10px 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 7px; font-size: 11px; }
   .agv-panel-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; color: var(--accent-light); font-family: monospace; font-size: 12px; }
   .agv-panel-info { color: var(--muted); font-size: 10.5px; line-height: 1.45; }
   .agv-field { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); }
   .agv-field .eng-input { width: 150px; }
   .agv-color { width: 34px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
   .agv-dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+  .agv-stop { display: flex; flex-direction: column; gap: 5px; padding: 6px 8px; border: 1px solid rgba(34,211,238,0.35); border-radius: 8px; }
+  .agv-count { width: 56px; }
   .agv-checklist { display: flex; flex-direction: column; gap: 3px; max-height: 150px; overflow-y: auto; padding: 4px 6px; border: 1px solid var(--border); border-radius: 8px; }
   .agv-checklist label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); font-family: monospace; font-size: 11px; }
   .agv-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin-top: 10px; }
@@ -718,6 +720,7 @@
       <button class="btn" data-action="agvTool" data-arg="pencil" title="Lápis: desenho à mão livre, suavizado ao soltar">✎ Lápis</button>
       <button class="btn" data-action="agvTool" data-arg="move" title="Mover pontas (e ligar uma ponta em outra ou num trecho) e mover trilhos inteiros">✥ Mover trilho</button>
       <button class="btn" data-action="agvTool" data-arg="agv" title="AGV 0,80 × 1,50 m: clique sobre um trilho">▭ AGV</button>
+      <button class="btn" data-action="agvTool" data-arg="stop" title="Parada programada: clique sobre um trecho no ponto da parada">⏹ Parada</button>
       <button class="btn" data-action="agvTool" data-arg="pan" title="Mover a vista">✋ Vista</button>
     </div>
   </div>
@@ -788,10 +791,10 @@
       <tbody id="agvCollisionBody"></tbody>
     </table>
   </div>
-  <div class="section-label text-amber mt-10">⏸ Paradas e esperas por AGV no horizonte (sensor de 1 m à frente e prioridade)</div>
+  <div class="section-label text-amber mt-10">⏸ Paradas e esperas por AGV no horizonte (sensor de 1 m à frente, prioridade e paradas programadas)</div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>AGV</th><th>Paradas pelo sensor</th><th>Tempo parado (sensor)</th><th>Esperas por prioridade</th><th>Tempo esperando (prioridade)</th><th>No fim do horizonte</th></tr></thead>
+      <thead><tr><th>AGV</th><th>Paradas pelo sensor</th><th>Tempo parado (sensor)</th><th>Esperas por prioridade</th><th>Tempo esperando (prioridade)</th><th>Paradas programadas</th><th>Tempo em paradas</th><th>No fim do horizonte</th></tr></thead>
       <tbody id="agvWaitBody"></tbody>
     </table>
   </div>
@@ -4607,9 +4610,16 @@ const AgvModel = (() => {
     m.trechos.forEach(tr => {
       const da = deltas.get(tr.a), db = deltas.get(tr.b);
       if (tr.id === skipId || (!da && !db)) return;
+      const before = tr.stops && tr.stops.length ? trechoLen(tr) : 0;
       deform(tr, da || [0, 0], db || [0, 0]);
       snapEnds(m, tr);
+      if (before > 1e-9) scaleStops(tr, trechoLen(tr) / before);
     });
+  }
+
+  /** Paradas acompanham o trecho quando ele muda de tamanho (mesma posição relativa). */
+  function scaleStops(tr, k) {
+    (tr.stops || []).forEach(sp => { sp.at *= k; });
   }
 
   /* ── Trilhos (caminhos) ───────────────────────────────────────────────── */
@@ -4752,11 +4762,15 @@ const AgvModel = (() => {
     }
     const nid = addNode(m, P);
     const piece = (pts, a, b) => {
-      const t = { id: m.nextId++, kind: tr.kind === 'path' && pts.length === 2 ? 'line' : tr.kind, pts: pts.map(q => [q[0], q[1]]), a, b, len: null };
+      const t = { id: m.nextId++, kind: tr.kind === 'path' && pts.length === 2 ? 'line' : tr.kind, pts: pts.map(q => [q[0], q[1]]), a, b, len: null, stops: [] };
       if (tr.len) t.len = trechoLen(t);   // comprimento definido continua valendo nas duas partes
       return t;
     };
     const t1 = piece(pa, tr.a, nid), t2 = piece(pb, nid, tr.b);
+    (tr.stops || []).forEach(sp => {   // cada parada fica na parte em que estava
+      if (sp.at < n.g) t1.stops.push(sp);
+      else t2.stops.push({ ...sp, at: sp.at - n.g });
+    });
     m.trechos.splice(m.trechos.indexOf(tr), 1, t1, t2);
     m.trilhos.forEach(tl => {
       if (!revIn.has(tl.id)) return;
@@ -4785,7 +4799,7 @@ const AgvModel = (() => {
     };
     const a = endNode(pts[0]);
     const b = endNode(pts[pts.length - 1]);
-    const tr = { id: m.nextId++, kind, pts: pts.map(q => [q[0], q[1]]), a, b, len: null };
+    const tr = { id: m.nextId++, kind, pts: pts.map(q => [q[0], q[1]]), a, b, len: null, stops: [] };
     m.trechos.push(tr);
     snapEnds(m, tr);
     desvio = desvio || degree(m, a) > 2 || degree(m, b) > 2;
@@ -4852,8 +4866,28 @@ const AgvModel = (() => {
     });
     const best = plans.reduce((b, p) => (p.cost < b.cost - 1e-9 || (Math.abs(p.cost - b.cost) <= 1e-9 && p.set.size < b.set.size) ? p : b));
     tr.pts = tr.pts.map(q => [best.pX[0] + (q[0] - best.pX[0]) * k, best.pX[1] + (q[1] - best.pX[1]) * k]);
+    scaleStops(tr, k);
     moveNodes(m, new Map([...best.set].map(id => [id, best.d])), tr.id);
     snapEnds(m, tr);
+  }
+
+  /* ── Paradas programadas ──────────────────────────────────────────────── */
+
+  /**
+   * Parada no trecho: { id, at (m desde a ponta inicial do trecho), cond: { type: 'time', s }, only: [ids de trilhos] | null }.
+   * `cond` é o que libera o AGV (por ora, só tempo); `only` = null vale para todos os trilhos que passam ali.
+   */
+  function addStop(m, tr, at, seconds = 30) {
+    const sp = { id: m.nextId++, at: Math.min(trechoLen(tr), Math.max(0, at)), cond: { type: 'time', s: seconds }, only: null };
+    tr.stops = [...(tr.stops || []), sp].sort((x, y) => x.at - y.at);
+    return sp;
+  }
+
+  /** Substitui as paradas do trecho por n paradas igualmente espaçadas. */
+  function distributeStops(m, tr, n, seconds) {
+    const L = trechoLen(tr);
+    tr.stops = [];
+    for (let i = 1; i <= n; i++) addStop(m, tr, (L * i) / (n + 1), seconds);
   }
 
   /** Liga o nó `from` no nó `into` (o primeiro deixa de existir). @returns {boolean} ligou */
@@ -4952,6 +4986,7 @@ const AgvModel = (() => {
   function repair(m, legacyLens = []) {
     const ids = new Set(m.nodes.map(n => n.id));
     m.trechos.forEach(tr => {
+      if (!Array.isArray(tr.stops)) tr.stops = [];
       ['a', 'b'].forEach((k, i) => {
         if (ids.has(tr[k])) return;
         const p = i ? tr.pts[tr.pts.length - 1] : tr.pts[0];
@@ -4969,7 +5004,7 @@ const AgvModel = (() => {
 
   return {
     PALETTE, dist, polyLen, midPoint, simplify, samples, trechoLen, lenMismatch, nearestOnPoly, degree, component, nearestNode, nearestTrecho,
-    route, trilhoGeom, pointAt, newTrilho, extendRouteTo, commitStroke, splitAt, setLength, moveNodes, mergeNodes, deleteTrecho, deleteTrilho,
+    route, trilhoGeom, pointAt, newTrilho, extendRouteTo, addStop, distributeStops, commitStroke, splitAt, setLength, moveNodes, mergeNodes, deleteTrecho, deleteTrilho,
     routeCandidates, toggleRouteTrecho, repair
   };
 })();
@@ -4980,10 +5015,13 @@ const AgvModel = (() => {
  *    Se dois se enxergam ao mesmo tempo (cruzamento, junção), o mais adiantado passa e o outro espera; frente a frente
  *    no mesmo caminho, nenhum passa (travamento). Encostados, quem tem o outro à frente não avança: nunca passam um
  *    por dentro do outro.
- *  - Prioridade (só os marcados): o AGV sem prioridade entende que o prioritário está passando ou vai passar no
- *    cruzamento / trecho em comum e para antes, com a frente a pelo menos 2 m do corpo do prioritário.
- * Estado por AGV: d (posição no trilho, m), s (sentido em que anda: +1/−1), done (parou no fim), wait (0 andando,
- * 1 sensor, 2 prioridade), by (quem causou a espera).
+ *  - Prioridade (só os marcados): pela velocidade, pelo trajeto e pelas paradas, o AGV sem prioridade calcula quando
+ *    cada um vai ocupar o ponto de encontro (cruzamento, junção, trecho em comum). Se dá tempo de passar antes do
+ *    prioritário, passa sem parar; se não dá, para 2 m antes do ponto e segue assim que o prioritário passou e está
+ *    a uns 2 m (não espera ele terminar o trecho em comum, quando os dois vão no mesmo sentido).
+ *  - Paradas programadas nos trechos: o AGV para no ponto e só sai quando a condição é atendida (por ora, tempo).
+ * Estado por AGV: d (posição no trilho, m), s (sentido em que anda: +1/−1), done (parou no fim), dwell (tempo que
+ * falta na parada programada, s), wait (0 andando, 1 sensor, 2 prioridade, 3 parada programada), by (quem causou).
  */
 const AgvTraffic = (() => {
   const AGV_LONG = 1.5, AGV_SHORT = 0.8, HALF = AGV_LONG / 2;
@@ -4991,9 +5029,9 @@ const AgvTraffic = (() => {
   const STEP_S = 0.1;                                  // passo da simulação (s)
   const REACH = Math.hypot(AGV_LONG, AGV_SHORT);       // centros mais perto que isto podem se encostar
   const NEAR = HALF + SENSOR_M + REACH / 2 + 0.05;     // além disto um AGV não aparece no sensor do outro
-  const YIELD_MARGIN = 2;                              // folga (s) para o AGV sem prioridade liberar a zona
-  const PRIO_GAP = 2;                                  // espaço livre (m) entre quem espera e o AGV com prioridade
-  const YIELD_DIST = HALF + PRIO_GAP + AGV_SHORT / 2;  // centro de quem espera até o trilho do prioritário (m)
+  const PRIO_GAP = 2;                                  // quem cede para 2 m antes do ponto e segue com o outro a 2 m
+  const SAFETY_S = 0.5;                                // folga de tempo na conta "dá tempo de passar?" (s)
+  const COINCIDE_M = 0.05;                             // trilhos a menos disto estão no mesmo trecho (em comum)
   const CHECKPOINT = 600;                              // passos entre fotografias do estado (60 s)
   const ZONE_STEP = 0.25;                              // amostragem das zonas de conflito (m)
   const MAX_EVENTS = 1000;                             // o relatório para de listar colisões depois disto
@@ -5044,7 +5082,7 @@ const AgvTraffic = (() => {
   /**
    * Zonas de conflito entre os trilhos A e B: intervalos de A em que o centro do AGV fica a menos de `near` do
    * trilho B (cruzamentos, trechos em comum, ligações), com o intervalo correspondente em B.
-   * @returns {{ a: [number, number], b: [number, number] }[]}
+   * @returns {{ a: [number, number], b: [number, number], co: {a, b} | null, dir: -1 | 0 | 1 }[]}
    */
   function conflictZones(ga, gb, near = REACH) {
     if (ga.pts.length < 2 || gb.pts.length < 2) return [];
@@ -5073,19 +5111,33 @@ const AgvTraffic = (() => {
         const dx = bx - ax, dy = by - ay, l = Math.hypot(dx, dy);
         const f = Math.min(1, Math.max(0, ((x - ax) * dx + (y - ay) * dy) / (l * l || 1)));
         const d = Math.hypot(x - ax - dx * f, y - ay - dy * f);
-        if (!best || d < best.d) best = { d, g: gb.cum[i - 1] + l * f };
+        if (!best || d < best.d) best = { d, g: gb.cum[i - 1] + l * f, tx: dx / (l || 1), ty: dy / (l || 1) };
       });
-      if (best && best.d < near) marks.push([g, best.g]);
+      if (!best || best.d >= near) continue;
+      const p0 = pointAt(ga, Math.max(0, g - 0.05)), p1 = pointAt(ga, Math.min(ga.len, g + 0.05));
+      const dot = ((p1[0] - p0[0]) * best.tx + (p1[1] - p0[1]) * best.ty) / (Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1);
+      marks.push({ g, gB: best.g, co: best.d < COINCIDE_M, dot });
     }
     const zones = [];
-    marks.forEach(([g, gB]) => {
-      const z = zones[zones.length - 1];
-      if (z && g - z.a[1] <= ZONE_STEP * 1.5) { z.a[1] = g; z.b[0] = Math.min(z.b[0], gB); z.b[1] = Math.max(z.b[1], gB); }
-      else zones.push({ a: [g, g], b: [gB, gB] });
+    marks.forEach(mk => {
+      let z = zones[zones.length - 1];
+      if (!z || mk.g - z.a[1] > ZONE_STEP * 1.5) { z = { a: [mk.g, mk.g], b: [mk.gB, mk.gB], co: null, dot: 0 }; zones.push(z); }
+      z.a[1] = mk.g;
+      z.b[0] = Math.min(z.b[0], mk.gB);
+      z.b[1] = Math.max(z.b[1], mk.gB);
+      if (mk.co) {
+        if (!z.co) z.co = { a: [mk.g, mk.g], b: [mk.gB, mk.gB] };
+        z.co.a[1] = mk.g;
+        z.co.b[0] = Math.min(z.co.b[0], mk.gB);
+        z.co.b[1] = Math.max(z.co.b[1], mk.gB);
+        z.dot += mk.dot;
+      }
     });
     return zones.map(z => ({
       a: [Math.max(0, z.a[0] - ZONE_STEP), Math.min(ga.len, z.a[1] + ZONE_STEP)],
-      b: [Math.max(0, z.b[0] - near), Math.min(gb.len, z.b[1] + near)]
+      b: [Math.max(0, z.b[0] - near), Math.min(gb.len, z.b[1] + near)],
+      co: z.co,                           // parte em comum (mesmo trecho), se houver
+      dir: z.co ? Math.sign(z.dot) : 0    // +1: os trilhos percorrem a parte em comum no mesmo sentido
     }));
   }
 
@@ -5101,7 +5153,7 @@ const AgvTraffic = (() => {
       const ok = !!(gm && gm.pts.length >= 2 && gm.len > 0);
       const ang = a.angle || 0;
       return {
-        id: a.id, a, tlId: ok ? tl.id : null, gm: ok ? gm : null,
+        id: a.id, a, tlId: ok ? tl.id : null, gm: ok ? gm : null, stops: ok ? routeStops(m, gm, tl.id) : [],
         v: Math.max(0, Number(a.speed) || 0) / 60, delay: Math.max(0, a.delay || 0), prio: !!a.priority, end: a.endMode,
         fixed: ok ? null : { x: a.x || 0, y: a.y || 0, ux: Math.cos(ang), uy: Math.sin(ang), hu: HALF, hv: AGV_SHORT / 2 }
       };
@@ -5110,14 +5162,31 @@ const AgvTraffic = (() => {
     return { units, zonesFor, yields: null, maxDelay };
   }
 
-  /** Para cada AGV sem prioridade: as zonas em que ele cede a passagem a um AGV com prioridade de outro trilho. */
+  /**
+   * Paradas programadas que valem para o trilho, na coordenada do trilho: [{ g, wait (s) }] em ordem.
+   * Condição de saída: por ora só tempo ({ type: 'time', s }).
+   */
+  function routeStops(m, gm, tlId) {
+    const out = [];
+    gm.segs.forEach(sg => {
+      const tr = m.trechos.find(t => t.id === sg.id);
+      (tr && tr.stops || []).forEach(sp => {
+        if (sp.only && !sp.only.includes(tlId)) return;
+        const at = Math.min(sg.len, Math.max(0, sp.at));
+        out.push({ g: sg.g0 + (sg.rev ? sg.len - at : at), wait: Math.max(0, Number(sp.cond && sp.cond.s) || 0), id: sp.id });
+      });
+    });
+    return out.sort((x, y) => x.g - y.g);
+  }
+
+  /** Para cada AGV sem prioridade: os pontos de encontro com os trilhos dos AGVs com prioridade. */
   function buildYields(W) {
     W.yields = W.units.map((u, i) => {
       if (!u.gm || u.prio) return [];
       const out = [];
       W.units.forEach((o, j) => {
         if (j === i || !o.gm || !o.prio || o.tlId === u.tlId) return;
-        W.zonesFor(u.tlId, o.tlId, YIELD_DIST).forEach(z => out.push({ j, za: z.a, zb: z.b }));
+        W.zonesFor(u.tlId, o.tlId).forEach(z => out.push({ j, za: z.a, zb: z.b, co: z.co, dir: z.dir }));
       });
       return out;
     });
@@ -5126,7 +5195,7 @@ const AgvTraffic = (() => {
   function initState(W) {
     const n = W.units.length;
     const st = {
-      k: 0, d: new Float64Array(n), s: new Int8Array(n), done: new Uint8Array(n), wait: new Uint8Array(n),
+      k: 0, d: new Float64Array(n), s: new Int8Array(n), done: new Uint8Array(n), dwell: new Float64Array(n), wait: new Uint8Array(n),
       by: new Int32Array(n).fill(-1), want: new Uint8Array(n), poses: new Array(n), hits: []
     };
     W.units.forEach((u, i) => {
@@ -5139,7 +5208,7 @@ const AgvTraffic = (() => {
     return st;
   }
 
-  const snapshot = st => ({ k: st.k, d: st.d.slice(), s: st.s.slice(), done: st.done.slice() });
+  const snapshot = st => ({ k: st.k, d: st.d.slice(), s: st.s.slice(), done: st.done.slice(), dwell: st.dwell.slice() });
 
   function restore(W, snap) {
     const st = initState(W);
@@ -5147,6 +5216,7 @@ const AgvTraffic = (() => {
     st.d.set(snap.d);
     st.s.set(snap.s);
     st.done.set(snap.done);
+    st.dwell.set(snap.dwell);
     W.units.forEach((u, i) => { if (u.gm) st.poses[i] = poseOn(u.gm, st.d[i]); });
     return st;
   }
@@ -5166,20 +5236,78 @@ const AgvTraffic = (() => {
     return st.s[a] * (pa.ux * (pb.x - pa.x) + pa.uy * (pb.y - pa.y));
   }
 
-  /** O AGV i (sem prioridade), prestes a entrar na zona, deve esperar o prioritário j? */
-  function mustYield(W, st, i, y, ahead, t) {
-    const u = W.units[i], o = W.units[y.j];
-    const zj = zoneAhead(o, st.d[y.j], st.s[y.j], y.zb);
-    if (zj.inside) return true;                          // o prioritário está na zona (andando ou parado)
-    if (st.done[y.j] || o.v <= 0) return false;
-    const eta = zj.dist / o.v + Math.max(0, o.delay - t);
-    const clear = (ahead.dist + (y.za[1] - y.za[0])) / u.v;
-    return eta <= clear + YIELD_MARGIN;                  // chegaria antes de o AGV sem prioridade sair da zona
+  /**
+   * Tempo (s, a partir de agora) para o centro do AGV andar `dist` metros no sentido em que vai: partida, parada
+   * em andamento, paradas programadas no caminho e velocidade (sem contar esperas que ainda não aconteceram).
+   */
+  function travelTime(W, st, k, dist, t) {
+    const u = W.units[k];
+    if (!(u.v > 0) || st.done[k]) return Infinity;
+    const L = u.gm.len, d = st.d[k], s = st.s[k];
+    if (!u.gm.closed && d + s * dist > L + 1e-9 && s > 0) return Infinity;   // passaria do fim do trilho
+    if (!u.gm.closed && d + s * dist < -1e-9 && s < 0) return Infinity;
+    let time = Math.max(0, u.delay - t) + st.dwell[k] + dist / u.v;
+    u.stops.forEach(sp => {
+      let rel = (sp.g - d) * s;
+      if (u.gm.closed) rel = mod(rel, L);
+      if (rel <= 1e-9 || rel >= dist) return;
+      time += sp.wait * (u.gm.closed ? 1 + Math.floor((dist - rel) / L) : 1);
+    });
+    return time;
+  }
+
+  /** Quando o AGV ocupa o intervalo [z0, z1] do trilho (com `pad` m a mais em cada ponta): { in, out } em s, ou null. */
+  function occupancy(W, st, k, z, pad, t) {
+    const u = W.units[k], d = st.d[k], s = st.s[k], L = u.gm.len;
+    const z0 = z[0] - pad, z1 = z[1] + pad;
+    if (d >= z0 && d <= z1) return { in: 0, out: travelTime(W, st, k, s > 0 ? z1 - d : d - z0, t) };
+    let toIn = s > 0 ? z0 - d : d - z1;
+    if (u.gm.closed) toIn = mod(toIn, L);
+    else if (toIn < 0) return null;   // já passou (neste sentido)
+    return { in: travelTime(W, st, k, toIn, t), out: travelTime(W, st, k, toIn + (z1 - z0), t) };
+  }
+
+  /**
+   * Trecho do ponto de encontro que importa para cada um. Na parte em comum percorrida no mesmo sentido, só a
+   * entrada (junção) conta: depois, um segue o outro pelo sensor. Em sentidos opostos (ou cruzamento), a zona toda.
+   */
+  function meetRegions(y, si, sj) {
+    if (!y.co || y.dir * si * sj <= 0) return { ra: y.za, rb: y.zb };
+    const ra = si > 0 ? [y.za[0], Math.min(y.za[1], y.co.a[0] + REACH)] : [Math.max(y.za[0], y.co.a[1] - REACH), y.za[1]];
+    const rb = sj > 0 ? [y.zb[0], Math.min(y.zb[1], y.co.b[0] + REACH)] : [Math.max(y.zb[0], y.co.b[1] - REACH), y.zb[1]];
+    return { ra, rb };
+  }
+
+  /**
+   * O AGV i (sem prioridade) está na linha de parada (2 m antes do ponto de encontro com o trilho do prioritário j):
+   * dá tempo de passar? Compara quando cada um ocupa o ponto; o prioritário com 2 m de folga antes e depois.
+   */
+  function mustYield(W, st, i, y, ra, rb, t) {
+    if (st.done[y.j] && !(st.d[y.j] >= rb[0] && st.d[y.j] <= rb[1])) return false;
+    const wj = occupancy(W, st, y.j, rb, PRIO_GAP, t);
+    if (!wj) return false;
+    if (wj.in === 0) return true;                         // o prioritário está no ponto (ou a menos de 2 m)
+    const wi = occupancy(W, st, i, ra, 0, t);
+    if (!wi) return false;
+    return wi.in < wj.out + SAFETY_S && wj.in < wi.out + SAFETY_S;   // os dois ocupariam o ponto ao mesmo tempo
   }
 
   function advance(u, st, i) {
-    const L = u.gm.len;
-    let d = st.d[i] + st.s[i] * u.v * STEP_S;
+    const L = u.gm.len, stepM = u.v * STEP_S;
+    let stop = null, best = Infinity;
+    u.stops.forEach(sp => {   // parada programada dentro deste passo: para exatamente nela
+      let rel = (sp.g - st.d[i]) * st.s[i];
+      if (u.gm.closed) rel = mod(rel, L);
+      if (sp.wait > 0 && rel > 1e-9 && rel <= stepM + 1e-9 && rel < best) { best = rel; stop = sp; }
+    });
+    if (stop) {
+      st.d[i] = stop.g;
+      st.dwell[i] = stop.wait;
+      const p = st.poses[i], [x, y] = pointAt(u.gm, stop.g);
+      Object.assign(p, { x, y, d: stop.g, dirty: true });
+      return;
+    }
+    let d = st.d[i] + st.s[i] * stepM;
     if (u.gm.closed) d = mod(d, L);
     else if (d > L || d < 0) {
       if (u.end === 'pingpong') { d = d > L ? 2 * L - d : -d; st.s[i] = -st.s[i]; }
@@ -5205,8 +5333,8 @@ const AgvTraffic = (() => {
     hits.length = 0;
     for (let i = 0; i < n; i++) {
       const u = W.units[i];
-      want[i] = u.gm && !st.done[i] && u.v > 0 && t >= u.delay ? 1 : 0;
-      wait[i] = 0;
+      want[i] = u.gm && !st.done[i] && u.v > 0 && t >= u.delay && !(st.dwell[i] > 0) ? 1 : 0;
+      wait[i] = st.dwell[i] > 0 ? 3 : 0;
       by[i] = -1;
     }
     for (let i = 0; i < n; i++) {
@@ -5237,13 +5365,15 @@ const AgvTraffic = (() => {
       wait[go] = 0;
       by[go] = -1;
     }
+    // prioridade: decide na linha de parada (2 m antes do ponto de encontro); depois dela, segue
     for (let i = 0; i < n; i++) {
       if (!want[i] || wait[i] || !W.yields[i].length) continue;
-      const u = W.units[i], reach = u.v * STEP_S + 1e-9;
+      const u = W.units[i], stepM = u.v * STEP_S;
       for (const y of W.yields[i]) {
-        const ahead = zoneAhead(u, st.d[i], st.s[i], y.za);
-        if (ahead.inside || ahead.dist > reach) continue;
-        if (mustYield(W, st, i, y, ahead, t)) { wait[i] = 2; by[i] = y.j; break; }
+        const { ra, rb } = meetRegions(y, st.s[i], st.s[y.j]);
+        const ahead = zoneAhead(u, st.d[i], st.s[i], ra);
+        if (ahead.inside || ahead.dist < PRIO_GAP - 1e-6 || ahead.dist > PRIO_GAP + stepM + 1e-9) continue;
+        if (mustYield(W, st, i, y, ra, rb, t)) { wait[i] = 2; by[i] = y.j; break; }
       }
     }
     if (!apply) {   // estado para exibir: todas as direções em dia
@@ -5252,6 +5382,11 @@ const AgvTraffic = (() => {
     }
     let moved = 0;
     for (let i = 0; i < n; i++) {
+      if (st.dwell[i] > 0) {   // parada programada
+        st.dwell[i] = st.dwell[i] - STEP_S > 1e-9 ? st.dwell[i] - STEP_S : 0;
+        moved++;
+        continue;
+      }
       if (!want[i] || wait[i]) continue;
       advance(W.units[i], st, i);
       moved++;
@@ -5266,7 +5401,7 @@ const AgvTraffic = (() => {
     return {
       W, nSteps, st: initState(W), collisions: [], open: new Map(), truncated: false, checkpoints: [],
       frozenAt: null, frozenSnap: null, finished: false,
-      stats: W.units.map(() => ({ sensorStops: 0, sensorTime: 0, prioStops: 0, prioTime: 0, longest: 0, cur: 0, since: 0, reason: 0, by: -1, last: 0, lastEnd: -Infinity }))
+      stats: W.units.map(() => ({ sensorStops: 0, sensorTime: 0, prioStops: 0, prioTime: 0, stationStops: 0, stationTime: 0, station: false, longest: 0, cur: 0, since: 0, reason: 0, by: -1, last: 0, lastEnd: -Infinity }))
     };
   }
 
@@ -5288,7 +5423,12 @@ const AgvTraffic = (() => {
     run.open.forEach((ev, key) => { if (!seen.has(key)) run.open.delete(key); });
     run.stats.forEach((s, i) => {
       const r = st.wait[i];
-      if (!r) {
+      if (r === 3) {   // parada programada: não é espera nem travamento
+        if (!s.station) s.stationStops++;
+        s.station = true;
+        s.stationTime += STEP_S;
+      } else s.station = false;
+      if (!r || r === 3) {
         if (s.reason) s.lastEnd = t;
         s.reason = 0;
         s.cur = 0;
@@ -5358,7 +5498,7 @@ const AgvTraffic = (() => {
 
   return {
     AGV_LONG, AGV_SHORT, SENSOR_M, PRIO_GAP, DT: STEP_S, MAX_EVENTS,
-    poseOn, overlap, conflictZones, createWorld, initState, step, createRun, advanceRun, stateAt
+    poseOn, overlap, conflictZones, routeStops, createWorld, initState, step, createRun, advanceRun, stateAt
   };
 })();
 
@@ -5510,7 +5650,7 @@ const AgvFlow = (() => {
 
   /** O que muda o movimento: se mudar, a simulação volta a t = 0 e o relatório é refeito. */
   const simKey = () => JSON.stringify([
-    ac().trechos.map(t => [t.id, t.a, t.b, t.pts]),
+    ac().trechos.map(t => [t.id, t.a, t.b, t.pts, t.stops]),
     ac().trilhos.map(t => [t.id, t.trechos, t.rev]),
     ac().agvs.map(a => [a.id, a.trilhoId, a.s0, a.speed, a.dir, a.endMode, a.delay, !!a.priority, a.x, a.y, a.angle])
   ]);
@@ -5876,6 +6016,27 @@ const AgvFlow = (() => {
         });
       }
     });
+    // paradas programadas (barra atravessada no trecho) e o início do trecho selecionado
+    ac().trechos.forEach(tr => {
+      const isSel = sel && sel.kind === 'trecho' && sel.id === tr.id;
+      if (!isSel && !(tr.stops && tr.stops.length)) return;
+      const smp = M.samples(tr);
+      if (isSel) {
+        const [sx, sy] = toPx(smp[0][0], smp[0][1]);
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(sx, sy, 4, 0, Math.PI * 2); ctx.fill();
+        label('início', sx, sy + 14, '#ffffff');
+      }
+      (tr.stops || []).forEach(sp => {
+        const p = alongPoly(smp, sp.at), [px, py] = toPx(p.x, p.y), r = 9;
+        ctx.strokeStyle = '#22d3ee';
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(px + p.ty * r, py - p.tx * r); ctx.lineTo(px - p.ty * r, py + p.tx * r); ctx.stroke();
+        ctx.fillStyle = '#0b0d12';
+        ctx.fillRect(px - 3, py - 3, 6, 6);
+        if (isSel || view().zoom >= 6) label(`⏹ ${fmt(sp.cond.s, 0)} s`, px, py + 17, '#67e8f9');
+      });
+    });
     // ligações (3 ou mais trechos) e, na ferramenta Mover, todas as pontas
     ac().nodes.forEach(n => {
       const deg = M.degree(ac(), n.id);
@@ -5918,7 +6079,7 @@ const AgvFlow = (() => {
       ctx.globalAlpha = 0.9;
       ctx.beginPath(); ctx.roundRect(-hu, -hv, 2 * hu, 2 * hv, Math.min(3, hv)); ctx.fill();
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = hit ? '#fecaca' : wait === 1 ? '#facc15' : wait === 2 ? '#c084fc' : (isSel ? '#ffffff' : 'rgba(11,13,18,0.9)');
+      ctx.strokeStyle = hit ? '#fecaca' : wait === 1 ? '#facc15' : wait === 2 ? '#c084fc' : wait === 3 ? '#22d3ee' : (isSel ? '#ffffff' : 'rgba(11,13,18,0.9)');
       ctx.lineWidth = isSel || hit || wait ? 2.5 : 1.5;
       ctx.stroke();
       // frente (para onde anda) e seta do movimento
@@ -5933,8 +6094,8 @@ const AgvFlow = (() => {
       }
       ctx.restore();
       if (z >= 3 || isSel) {
-        const tag = wait === 1 ? ' ⏸ sensor' : wait === 2 ? ' ⏸ prioridade' : '';
-        const txtColor = hit ? '#fca5a5' : wait === 1 ? '#fde68a' : wait === 2 ? '#e9d5ff' : '#f1f5f9';
+        const tag = wait === 1 ? ' ⏸ sensor' : wait === 2 ? ' ⏸ prioridade' : wait === 3 ? ` ⏹ parada ${Math.ceil(live.dwell[i])} s` : '';
+        const txtColor = hit ? '#fca5a5' : wait === 1 ? '#fde68a' : wait === 2 ? '#e9d5ff' : wait === 3 ? '#a5f3fc' : '#f1f5f9';
         label(`${hit ? '⚠ ' : ''}${a.priority ? '★ ' : ''}${a.name}${tag}`, cx, cy - Math.max(hu, hv) - 12, txtColor);
       }
     });
@@ -6022,12 +6183,13 @@ const AgvFlow = (() => {
   /* ── Ferramentas e ponteiro ───────────────────────────────────────────── */
 
   const HINTS = {
-    select: 'Clique num trecho ou AGV para configurar · arraste um AGV pelo trilho · arraste o fundo para mover a vista · Delete apaga o selecionado',
+    select: 'Clique num trecho ou AGV para configurar · arraste um AGV pelo trilho ou uma parada (⏹) pelo trecho · arraste o fundo para mover a vista · Delete apaga o selecionado',
     line: 'Linha: clique e arraste. Numa ponta (○) continua o trilho; no meio de um trecho (◇) liga com desvio · Shift = ângulos de 15°',
     curve: 'Curva: arraste do início ao fim, solte e mova o mouse para curvar; clique para fixar (Esc cancela)',
     pencil: 'Lápis: desenhe segurando o botão; ao soltar o traço é suavizado seguindo o seu caminho',
     move: 'Mover: arraste uma ponta (□) — solte sobre outra ponta ou trecho para ligar · arraste um trecho para mover o trilho inteiro com o que está ligado nele',
     agv: 'AGV (0,80 × 1,50 m): clique sobre um trilho; depois a ferramenta volta para Selecionar (Shift+clique coloca vários)',
+    stop: 'Parada: clique sobre um trecho no ponto da parada (o AGV para ali e sai quando a condição for atendida) · Shift+clique coloca várias',
     pan: 'Vista: arraste para deslocar · roda do mouse aproxima/afasta',
     route: ''
   };
@@ -6064,6 +6226,33 @@ const AgvFlow = (() => {
       if (Math.abs(dx * b.ux + dy * b.uy) <= b.hu + pad && Math.abs(-dx * b.uy + dy * b.ux) <= b.hv + pad) return ac().agvs[i].id;
     }
     return null;
+  }
+
+  /** Ponto e direção da polilinha a g metros do início. */
+  function alongPoly(pts, g) {
+    for (let i = 1; i < pts.length; i++) {
+      const l = dist(pts[i - 1], pts[i]);
+      if (g <= l || i === pts.length - 1) {
+        const f = l ? Math.min(1, Math.max(0, g / l)) : 0;
+        return { x: pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * f, y: pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f, tx: (pts[i][0] - pts[i - 1][0]) / (l || 1), ty: (pts[i][1] - pts[i - 1][1]) / (l || 1) };
+      }
+      g -= l;
+    }
+    return { x: pts[0][0], y: pts[0][1], tx: 1, ty: 0 };
+  }
+
+  /** Marca de parada sob o ponteiro: { tr, sp }. */
+  function pickStop(px, py) {
+    let best = null;
+    ac().trechos.forEach(tr => {
+      if (!tr.stops || !tr.stops.length) return;
+      const smp = M.samples(tr);
+      tr.stops.forEach(sp => {
+        const p = alongPoly(smp, sp.at), [sx, sy] = toPx(p.x, p.y), d = Math.hypot(sx - px, sy - py);
+        if (d <= PICK_PX + 2 && (!best || d < best.d)) best = { tr, sp, d };
+      });
+    });
+    return best;
   }
 
   function pickTrecho(px, py) {
@@ -6104,9 +6293,13 @@ const AgvFlow = (() => {
       if (t !== null) { routeClick(t); return; }
       startPan(px, py);
     } else if (tool === 'select') {
-      const hit = pick(px, py);
+      const stopHit = pickAgv(px, py) === null ? pickStop(px, py) : null;
+      const hit = stopHit ? { kind: 'trecho', id: stopHit.tr.id } : pick(px, py);
       sel = hit;
-      if (hit && hit.kind === 'agv') {
+      if (stopHit) {
+        pushUndo();
+        drag = { kind: 'stop', tr: stopHit.tr, sp: stopHit.sp, moved: false };
+      } else if (hit && hit.kind === 'agv') {
         pushUndo();
         drag = { kind: 'agv', id: hit.id, moved: false };
       } else if (!hit) startPan(px, py);
@@ -6135,6 +6328,15 @@ const AgvFlow = (() => {
       draft = { kind: 'curve', phase: 'span', a, b: a.slice(), c: null };
     } else if (tool === 'pencil') {
       draft = { kind: 'pencil', pts: [snapPoint(m)] };
+    } else if (tool === 'stop') {
+      const t = pickTrecho(px, py);
+      if (t === null) { showMemToast('Clique sobre um trecho para pôr a parada', true); return; }
+      const tr = trecho(t);
+      edit(() => M.addStop(ac(), tr, M.nearestOnPoly(M.samples(tr), m[0], m[1]).g, 30));
+      sel = { kind: 'trecho', id: t };
+      if (!e.shiftKey) setTool('select');
+      renderPanel();
+      return;
     } else if (tool === 'agv') {
       const hit = pickAgv(px, py);
       if (hit !== null) { sel = { kind: 'agv', id: hit }; setTool('select'); return; }
@@ -6153,6 +6355,12 @@ const AgvFlow = (() => {
       view().cx = drag.cx - (px - drag.px) / view().zoom;
       view().cy = drag.cy - (py - drag.py) / view().zoom;
       requestDraw();
+      return;
+    }
+    if (drag && drag.kind === 'stop') {
+      drag.sp.at = M.nearestOnPoly(M.samples(drag.tr), m[0], m[1]).g;
+      drag.moved = true;
+      resetSim(false);
       return;
     }
     if (drag && drag.kind === 'agv') {
@@ -6211,7 +6419,7 @@ const AgvFlow = (() => {
         canvas.style.cursor = pickTrecho(px, py) !== null ? 'pointer' : 'default';
       } else {
         const hit = pick(px, py);
-        canvas.style.cursor = hit ? (hit.kind === 'agv' ? 'grab' : 'pointer') : 'default';
+        canvas.style.cursor = hit && hit.kind === 'agv' ? 'grab' : (pickStop(px, py) ? 'ew-resize' : (hit ? 'pointer' : 'default'));
       }
     }
   }
@@ -6222,9 +6430,11 @@ const AgvFlow = (() => {
     if (drag) {
       const d = drag;
       drag = null;
-      if (d.kind === 'agv') {
-        if (d.moved) changed();
-        else undoStack.pop();   // só um clique: nada mudou
+      if (d.kind === 'agv' || d.kind === 'stop') {
+        if (d.moved) {
+          if (d.kind === 'stop') d.tr.stops.sort((x, y) => x.at - y.at);
+          changed();
+        } else undoStack.pop();   // só um clique: nada mudou
       } else if (d.kind === 'node' || d.kind === 'group') {
         if (!d.moved) { undoStack.pop(); requestDraw(); return; }
         if (d.kind === 'node' && hoverSnap) {   // soltou sobre outra ponta ou trecho: liga
@@ -6327,6 +6537,61 @@ const AgvFlow = (() => {
 
   const trilhoKind = (tl, gm) => (!tl.trechos.length ? 'Vazio' : (gm.closed ? 'Circuito' : 'Aberto'));
 
+  const round2 = v => Math.round(v * 100) / 100;
+
+  /** Paradas programadas do trecho: posição, condição de saída (por ora, tempo) e para quais trilhos valem. */
+  function stopsEditor(tr, users, len) {
+    const stops = (tr.stops || []).slice().sort((x, y) => x.at - y.at);
+    const out = [info(stops.length
+      ? `⏹ Paradas neste trecho (${stops.length}) — posição em metros a partir do início do trecho (●):`
+      : '⏹ Sem paradas. O AGV para no ponto e só sai quando a condição for atendida:')];
+    stops.forEach((sp, k) => {
+      const box = document.createElement('div');
+      box.className = 'agv-stop';
+      const head = document.createElement('div');
+      head.className = 'agv-panel-title';
+      head.textContent = `Parada ${k + 1}`;
+      head.appendChild(button('✕', 'eng-chip', () => edit(() => { tr.stops = tr.stops.filter(x => x !== sp); }), 'Remover a parada'));
+      box.append(
+        head,
+        field('Posição (m)', numberInput(round2(sp.at), 0.1, v => edit(() => {
+          sp.at = Math.min(len, Math.max(0, v || 0));
+          tr.stops.sort((x, y) => x.at - y.at);
+        }))),
+        field('Sai quando', selectInput([['time', 'Passar o tempo']], sp.cond.type, () => {})),
+        field('Tempo parado (s)', numberInput(sp.cond.s, 1, v => edit(() => { sp.cond.s = Math.max(0, v || 0); })))
+      );
+      if (users.length > 1) {
+        box.append(info('Vale para:'), checklist(users.map(tl => ({
+          text: tl.name, color: tl.color, checked: !sp.only || sp.only.includes(tl.id),
+          onChange: on => edit(() => {
+            const cur = sp.only || users.map(u => u.id);
+            const next = on ? [...new Set([...cur, tl.id])] : cur.filter(id => id !== tl.id);
+            sp.only = next.length === users.length ? null : next;
+          })
+        }))));
+      }
+      out.push(box);
+    });
+    const count = document.createElement('input');
+    count.type = 'number';
+    count.className = 'eng-input agv-count';
+    count.min = '1';
+    count.step = '1';
+    count.value = String(Math.max(1, stops.length || 1));
+    const row = document.createElement('div');
+    row.className = 'btn-group';
+    const lastWait = stops.length ? stops[stops.length - 1].cond.s : 30;
+    row.append(
+      button('➕ Adicionar parada', 'btn', () => edit(() => M.addStop(ac(), tr, len / 2, lastWait)), 'Nova parada no meio do trecho (arraste a marca ⏹ para o lugar ou digite a posição)'),
+      count,
+      button('Distribuir', 'btn', () => edit(() => M.distributeStops(ac(), tr, Math.min(200, Math.max(1, Math.round(Number(count.value) || 1))), lastWait)),
+        'Troca as paradas do trecho por esta quantidade, igualmente espaçadas')
+    );
+    out.push(row);
+    return out;
+  }
+
   /** Painel flutuante: configura o trecho, o trilho ou o AGV selecionado. */
   function renderPanel() {
     const panel = $('agvPanel');
@@ -6364,6 +6629,7 @@ const AgvFlow = (() => {
         row.appendChild(button('Liberar medida', 'btn', () => edit(() => { item.len = null; }), 'O trecho deixa de ter comprimento definido (pode esticar quando outro trecho mudar)'));
         panel.appendChild(row);
       }
+      panel.append(...stopsEditor(item, users, len));
       panel.appendChild(button('✕ Excluir trecho', 'btn btn-delete', () => deleteTrecho(item.id)));
       return;
     }
@@ -6431,7 +6697,13 @@ const AgvFlow = (() => {
     const tl = trilho(item.trilhoId);
     panel.append(
       info(tl
-        ? `${trilhoKind(tl, geom(tl))} · ${fmt(geom(tl).len, 1)} m · AGV ${T.AGV_SHORT.toFixed(2)} × ${T.AGV_LONG.toFixed(2)} m, comprido no trilho · sensor de proximidade: ${fmt(T.SENSOR_M, 0)} m à frente (para e espera)`
+        ? (() => {
+          const stops = T.routeStops(ac(), geom(tl), tl.id).filter(sp => sp.wait > 0);
+          const trip = item.speed > 0 ? geom(tl).len / (item.speed / 60) + stops.reduce((acc, sp) => acc + sp.wait, 0) : Infinity;
+          return `${trilhoKind(tl, geom(tl))} · ${fmt(geom(tl).len, 1)} m · percurso completo sem esperas: ${Number.isFinite(trip) ? fmtDur(trip) : '—'}`
+            + ` (${stops.length} parada(s) programada(s)) · AGV ${fmt(T.AGV_SHORT, 2)} × ${fmt(T.AGV_LONG, 2)} m, comprido no trilho`
+            + ` · sensor de proximidade: ${fmt(T.SENSOR_M, 0)} m à frente (para e espera)`;
+        })()
         : 'Arraste o AGV (ou escolha um trilho) para ele andar sobre o caminho'),
       button('✕ Excluir AGV', 'btn btn-delete', () => deleteAgv(item.id))
     );
@@ -6527,7 +6799,7 @@ const AgvFlow = (() => {
 
     const wb = $('agvWaitBody');
     wb.innerHTML = '';
-    if (!ac().agvs.length) emptyRow(wb, 6, 'Nenhum AGV.');
+    if (!ac().agvs.length) emptyRow(wb, 8, 'Nenhum AGV.');
     ac().agvs.forEach((a, i) => {
       const s = r.stats[i], u = world.units[i];
       if (!s || !u) return;
@@ -6537,8 +6809,10 @@ const AgvFlow = (() => {
         const why = s.reason === 1 ? `sensor: ${name(world.units[s.by].id)} à frente` : `esperando ${name(world.units[s.by].id)} (prioridade)`;
         end = `⛔ Travado desde ${fmtTime(s.since)} (${why})`;
       } else if (r.st.done[i]) end = 'Parado no fim do trilho';
+      else if (r.st.dwell[i] > 0) end = '⏹ Em parada programada';
       else if (s.reason) end = s.reason === 1 ? '⏸ Parado pelo sensor' : '⏸ Esperando prioridade';
-      cellRow(wb, [`${a.priority ? '★ ' : ''}${a.name}`, String(s.sensorStops), fmtDur(s.sensorTime), String(s.prioStops), fmtDur(s.prioTime), end], () => {
+      cellRow(wb, [`${a.priority ? '★ ' : ''}${a.name}`, String(s.sensorStops), fmtDur(s.sensorTime), String(s.prioStops), fmtDur(s.prioTime),
+        String(s.stationStops), fmtDur(s.stationTime), end], () => {
         sel = { kind: 'agv', id: a.id };
         renderPanel();
         if (s.reason && s.cur >= STUCK_S) goTo(s.since);
@@ -6774,7 +7048,12 @@ function mergeAgvConfig(t, c) {
       .map(tr => {
         const id = num(tr.id, 0), len = Number(tr.len) > 0 ? Number(tr.len) : null;
         if (!len && Number(tr.realLen) > 0) legacyLens.push([id, Number(tr.realLen)]);
-        return { id, kind: tr.kind, pts: tr.pts.map(p => [Number(p[0]), Number(p[1])]), a: num(tr.a, -1), b: num(tr.b, -1), len };
+        const stops = (Array.isArray(tr.stops) ? tr.stops : []).filter(sp => sp && Number.isFinite(Number(sp.at))).map(sp => ({
+          id: num(sp.id, 0), at: Math.max(0, Number(sp.at)),
+          cond: { type: 'time', s: Math.max(0, num(sp.cond && sp.cond.s, 30)) },
+          only: Array.isArray(sp.only) ? sp.only.map(Number).filter(Number.isFinite) : null
+        }));
+        return { id, kind: tr.kind, pts: tr.pts.map(p => [Number(p[0]), Number(p[1])]), a: num(tr.a, -1), b: num(tr.b, -1), len, stops };
       });
   }
   if (Array.isArray(c.trilhos)) {
@@ -6800,7 +7079,7 @@ function mergeAgvConfig(t, c) {
     t.view = { cx: num(c.view.cx, 0), cy: num(c.view.cy, 0), zoom: Math.min(300, Math.max(0.3, num(c.view.zoom, 6))) };
   }
   if (Number.isFinite(Number(c.days))) t.days = Math.min(60, Math.max(1, Math.round(Number(c.days))));
-  const maxId = Math.max(0, ...[t.nodes, t.trechos, t.trilhos, t.agvs].flatMap(list => list.map(o => o.id)));
+  const maxId = Math.max(0, ...[t.nodes, t.trechos, t.trilhos, t.agvs, t.trechos.flatMap(tr => tr.stops || [])].flatMap(list => list.map(o => o.id)));
   t.nextId = Math.max(num(c.nextId, 1), maxId + 1);
   AgvModel.repair(t, legacyLens);
   const trilhoIds = new Set(t.trilhos.map(tl => tl.id));
