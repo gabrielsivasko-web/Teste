@@ -4977,8 +4977,11 @@ const AgvModel = (() => {
 /**
  * Tráfego dos AGVs (sem DOM): simulação passo a passo (0,1 s) com as regras de movimento.
  *  - Sensor de proximidade (todos): o AGV enxerga 1 m à frente, na largura dele; havendo outro AGV ali, para e espera.
- *  - Prioridade (só os marcados): nos cruzamentos e trechos em comum com o trilho de um AGV com prioridade, o AGV sem
- *    prioridade espera antes de entrar na zona enquanto o prioritário estiver nela ou chegando a tempo de encontrá-lo.
+ *    Se dois se enxergam ao mesmo tempo (cruzamento, junção), o mais adiantado passa e o outro espera; frente a frente
+ *    no mesmo caminho, nenhum passa (travamento). Encostados, quem tem o outro à frente não avança: nunca passam um
+ *    por dentro do outro.
+ *  - Prioridade (só os marcados): o AGV sem prioridade entende que o prioritário está passando ou vai passar no
+ *    cruzamento / trecho em comum e para antes, com a frente a pelo menos 2 m do corpo do prioritário.
  * Estado por AGV: d (posição no trilho, m), s (sentido em que anda: +1/−1), done (parou no fim), wait (0 andando,
  * 1 sensor, 2 prioridade), by (quem causou a espera).
  */
@@ -4989,10 +4992,13 @@ const AgvTraffic = (() => {
   const REACH = Math.hypot(AGV_LONG, AGV_SHORT);       // centros mais perto que isto podem se encostar
   const NEAR = HALF + SENSOR_M + REACH / 2 + 0.05;     // além disto um AGV não aparece no sensor do outro
   const YIELD_MARGIN = 2;                              // folga (s) para o AGV sem prioridade liberar a zona
+  const PRIO_GAP = 2;                                  // espaço livre (m) entre quem espera e o AGV com prioridade
+  const YIELD_DIST = HALF + PRIO_GAP + AGV_SHORT / 2;  // centro de quem espera até o trilho do prioritário (m)
   const CHECKPOINT = 600;                              // passos entre fotografias do estado (60 s)
   const ZONE_STEP = 0.25;                              // amostragem das zonas de conflito (m)
   const MAX_EVENTS = 1000;                             // o relatório para de listar colisões depois disto
   const RESUME_S = 2;                                  // voltar a parar antes disto (s) é a mesma parada
+  const TOUCH_M = 0.01;                                // só encostar de raspão (menos que isto) não é colisão
   const mod = (v, L) => ((v % L) + L) % L;
   const { pointAt } = AgvModel;
 
@@ -5019,14 +5025,14 @@ const AgvTraffic = (() => {
     if (p.dirty) headingAt(W.units[i].gm, p.d, p);
   }
 
-  /** Sobreposição de dois retângulos girados { x, y, ux, uy, hu, hv } (eixos separadores). */
-  function overlap(A, B) {
+  /** Sobreposição de dois retângulos girados { x, y, ux, uy, hu, hv } (eixos separadores); `depth` = penetração mínima. */
+  function overlap(A, B, depth = 0) {
     const axes = [[A.ux, A.uy], [-A.uy, A.ux], [B.ux, B.uy], [-B.uy, B.ux]];
     const dx = B.x - A.x, dy = B.y - A.y;
     return axes.every(([ax, ay]) => {
       const rA = A.hu * Math.abs(A.ux * ax + A.uy * ay) + A.hv * Math.abs(-A.uy * ax + A.ux * ay);
       const rB = B.hu * Math.abs(B.ux * ax + B.uy * ay) + B.hv * Math.abs(-B.uy * ax + B.ux * ay);
-      return Math.abs(dx * ax + dy * ay) <= rA + rB;
+      return Math.abs(dx * ax + dy * ay) <= rA + rB - depth;
     });
   }
 
@@ -5036,18 +5042,18 @@ const AgvTraffic = (() => {
   });
 
   /**
-   * Zonas de conflito entre os trilhos A e B: intervalos de A em que o centro do AGV fica a menos de REACH do
+   * Zonas de conflito entre os trilhos A e B: intervalos de A em que o centro do AGV fica a menos de `near` do
    * trilho B (cruzamentos, trechos em comum, ligações), com o intervalo correspondente em B.
    * @returns {{ a: [number, number], b: [number, number] }[]}
    */
-  function conflictZones(ga, gb) {
+  function conflictZones(ga, gb, near = REACH) {
     if (ga.pts.length < 2 || gb.pts.length < 2) return [];
-    const cell = 2 * REACH, grid = new Map();
+    const cell = 2 * near, grid = new Map();
     const cellKey = (cx, cy) => `${cx},${cy}`;
     for (let i = 1; i < gb.pts.length; i++) {
       const [ax, ay] = gb.pts[i - 1], [bx, by] = gb.pts[i];
-      const x0 = Math.floor((Math.min(ax, bx) - REACH) / cell), x1 = Math.floor((Math.max(ax, bx) + REACH) / cell);
-      const y0 = Math.floor((Math.min(ay, by) - REACH) / cell), y1 = Math.floor((Math.max(ay, by) + REACH) / cell);
+      const x0 = Math.floor((Math.min(ax, bx) - near) / cell), x1 = Math.floor((Math.max(ax, bx) + near) / cell);
+      const y0 = Math.floor((Math.min(ay, by) - near) / cell), y1 = Math.floor((Math.max(ay, by) + near) / cell);
       for (let cx = x0; cx <= x1; cx++) {
         for (let cy = y0; cy <= y1; cy++) {
           const k = cellKey(cx, cy);
@@ -5069,7 +5075,7 @@ const AgvTraffic = (() => {
         const d = Math.hypot(x - ax - dx * f, y - ay - dy * f);
         if (!best || d < best.d) best = { d, g: gb.cum[i - 1] + l * f };
       });
-      if (best && best.d < REACH) marks.push([g, best.g]);
+      if (best && best.d < near) marks.push([g, best.g]);
     }
     const zones = [];
     marks.forEach(([g, gB]) => {
@@ -5079,14 +5085,14 @@ const AgvTraffic = (() => {
     });
     return zones.map(z => ({
       a: [Math.max(0, z.a[0] - ZONE_STEP), Math.min(ga.len, z.a[1] + ZONE_STEP)],
-      b: [Math.max(0, z.b[0] - REACH), Math.min(gb.len, z.b[1] + REACH)]
+      b: [Math.max(0, z.b[0] - near), Math.min(gb.len, z.b[1] + near)]
     }));
   }
 
   /**
    * Mundo da simulação: um "unit" por AGV (na ordem de config.agvCfg.agvs). AGV sem trilho é um obstáculo parado.
    * @param geomOf   trilho → geometria
-   * @param zonesFor (idTrilhoA, idTrilhoB) → zonas de conflito (com cache)
+   * @param zonesFor (idTrilhoA, idTrilhoB, near) → zonas de conflito (com cache)
    */
   function createWorld(m, geomOf, zonesFor) {
     const units = m.agvs.map(a => {
@@ -5111,7 +5117,7 @@ const AgvTraffic = (() => {
       const out = [];
       W.units.forEach((o, j) => {
         if (j === i || !o.gm || !o.prio || o.tlId === u.tlId) return;
-        W.zonesFor(u.tlId, o.tlId).forEach(z => out.push({ j, za: z.a, zb: z.b }));
+        W.zonesFor(u.tlId, o.tlId, YIELD_DIST).forEach(z => out.push({ j, za: z.a, zb: z.b }));
       });
       return out;
     });
@@ -5152,6 +5158,12 @@ const AgvTraffic = (() => {
     if (u.gm.closed) return { inside: false, dist: s > 0 ? mod(z[0] - d, L) : mod(d - z[1], L) };
     if (s > 0) return { inside: false, dist: z[0] >= d ? z[0] - d : Infinity };
     return { inside: false, dist: z[1] <= d ? d - z[1] : Infinity };
+  }
+
+  /** Quanto o AGV b está à frente do AGV a (projeção no sentido em que a anda; negativo = atrás). */
+  function aheadOf(st, a, b) {
+    const pa = st.poses[a], pb = st.poses[b];
+    return st.s[a] * (pa.ux * (pb.x - pa.x) + pa.uy * (pb.y - pa.y));
   }
 
   /** O AGV i (sem prioridade), prestes a entrar na zona, deve esperar o prioritário j? */
@@ -5206,8 +5218,24 @@ const AgvTraffic = (() => {
         ensureHeading(W, st, j);
         if (want[i] && !wait[i] && overlap(sensorBox(A, st.s[i]), B)) { wait[i] = 1; by[i] = j; }
         if (want[j] && !wait[j] && overlap(sensorBox(B, st.s[j]), A)) { wait[j] = 1; by[j] = i; }
-        if (d2 <= REACH * REACH && overlap(A, B)) hits.push(i, j);
+        if (d2 <= REACH * REACH && overlap(A, B, TOUCH_M)) hits.push(i, j);
       }
+    }
+    // encostados: quem tem o outro à frente não avança (não passam um por dentro do outro)
+    for (let h = 0; h < hits.length; h += 2) {
+      [[hits[h], hits[h + 1]], [hits[h + 1], hits[h]]].forEach(([a, b]) => {
+        if (want[a] && !wait[a] && aheadOf(st, a, b) > 1e-6) { wait[a] = 1; by[a] = b; }
+      });
+    }
+    // um enxerga o outro e vice-versa (cruzamento, junção): o mais adiantado passa; frente a frente, nenhum
+    for (let i = 0; i < n; i++) {
+      const j = by[i];
+      if (wait[i] !== 1 || j <= i || wait[j] !== 1 || by[j] !== i) continue;
+      const pi = poses[i], pj = poses[j];
+      if (st.s[i] * st.s[j] * (pi.ux * pj.ux + pi.uy * pj.uy) < -0.5) continue;
+      const go = aheadOf(st, i, j) <= aheadOf(st, j, i) + 1e-9 ? i : j;
+      wait[go] = 0;
+      by[go] = -1;
     }
     for (let i = 0; i < n; i++) {
       if (!want[i] || wait[i] || !W.yields[i].length) continue;
@@ -5329,7 +5357,7 @@ const AgvTraffic = (() => {
   }
 
   return {
-    AGV_LONG, AGV_SHORT, SENSOR_M, DT: STEP_S, MAX_EVENTS,
+    AGV_LONG, AGV_SHORT, SENSOR_M, PRIO_GAP, DT: STEP_S, MAX_EVENTS,
     poseOn, overlap, conflictZones, createWorld, initState, step, createRun, advanceRun, stateAt
   };
 })();
@@ -5439,11 +5467,11 @@ const AgvFlow = (() => {
   }
 
   /** Zonas de conflito entre dois trilhos (cruzamentos, ligações e trechos em comum), até a geometria mudar. */
-  function zonesFor(idA, idB) {
-    const key = `${idA}|${idB}`;
+  function zonesFor(idA, idB, near) {
+    const key = `${idA}|${idB}|${near || 0}`;
     if (!zoneCache.has(key)) {
       const A = trilho(idA), B = trilho(idB);
-      zoneCache.set(key, A && B ? T.conflictZones(geom(A), geom(B)) : []);
+      zoneCache.set(key, A && B ? T.conflictZones(geom(A), geom(B), near) : []);
     }
     return zoneCache.get(key);
   }
@@ -6393,7 +6421,7 @@ const AgvFlow = (() => {
     panel.append(
       field('Nome', name),
       field('Trilho', selectInput(trilhos, item.trilhoId ?? '', v => edit(() => assignAgv(item, trilho(Number(v)))))),
-      field('Prioridade', selectInput([['0', 'Não'], ['1', '★ Sim — os outros esperam']], item.priority ? '1' : '0', v => edit(() => { item.priority = v === '1'; }))),
+      field('Prioridade', selectInput([['0', 'Não (só o sensor)'], ['1', '★ Sim — os outros param 2 m antes']], item.priority ? '1' : '0', v => edit(() => { item.priority = v === '1'; }))),
       field('Velocidade (m/min)', numberInput(item.speed, 1, v => edit(() => { item.speed = Math.max(0, v || 0); }))),
       field('Sentido', selectInput(DIR_OPTIONS, item.dir, v => edit(() => { item.dir = Number(v) < 0 ? -1 : 1; }))),
       field('Posição inicial (m)', numberInput(Math.round(item.s0 * 100) / 100, 0.1, v => edit(() => { item.s0 = Math.max(0, v || 0); }))),

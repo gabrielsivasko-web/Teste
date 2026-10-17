@@ -130,10 +130,14 @@ móvel (arrastar o fundo ou ✋ Vista). **O desenho é sempre em escala.**
   do trilho ou contra), posição inicial, partida (s) e comportamento no fim do trilho (para, vai e volta, recomeça).
   Gira acompanhando o trilho com o eixo no meio do AGV; ao editar a rede, continua no mesmo ponto do seu trecho.
 - **Sensor de proximidade (todos os AGVs):** enxerga 1 m à frente, na largura do AGV; se houver outro AGV ali, para e
-  espera (no desenho: faixa à frente do AGV, amarela quando detecta; contorno amarelo "⏸ sensor").
-- **Prioridade (só os marcados ★):** nos cruzamentos e trechos em comum com o trilho de um AGV com prioridade, o AGV
-  sem prioridade espera antes de entrar enquanto o prioritário estiver na zona ou chegando a tempo de encontrá-lo
-  (contorno lilás "⏸ prioridade"). As zonas são calculadas pela geometria dos trilhos (onde os AGVs podem se encostar).
+  espera (no desenho: faixa à frente do AGV, amarela quando detecta; contorno amarelo "⏸ sensor"). Num cruzamento, quem
+  chega depois vê o outro passando e espera. Se os dois se enxergam ao mesmo tempo, o mais adiantado passa e o outro
+  espera; frente a frente no mesmo caminho nenhum passa (travamento). Só chegando juntos ao mesmo ponto (ex.: numa
+  junção em V) eles podem encostar — é uma colisão no relatório — e mesmo assim um para e o outro passa; nunca seguem
+  os dois um por dentro do outro.
+- **Prioridade (só os marcados ★):** o AGV sem prioridade entende que o prioritário está passando ou vai passar no
+  cruzamento / trecho em comum e para antes, com a frente a **pelo menos 2 m** do corpo do prioritário (contorno lilás
+  "⏸ prioridade"); segue quando o prioritário já passou. As zonas são calculadas pela geometria dos trilhos.
 - **Fluxo contínuo:** ▶ Simular anima os AGVs sem reiniciar — cada um segue a sua regra (circuito, vai e volta ou para
   no fim) indefinidamente. O tempo aparece como "Dia N · hh:mm:ss", com **dia de 18 h**; velocidades de 1x a 1800x.
 - **Relatório:** vale só para o **horizonte do relatório (em dias)**. Os AGVs são simulados nesse período, passo a
