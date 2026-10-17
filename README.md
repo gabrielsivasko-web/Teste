@@ -101,6 +101,28 @@ passe (1º a 4º). Para cada passe:
 
 Tudo fica salvo no PC e vai junto no `.json` exportado (`engCfg`).
 
+## Página Fluxo de AGVs
+
+Terceira opção do título. Uma área com **grade de 10 m por quadrado**, zoom (roda do mouse, ＋/－, ⤢ Ajustar) e vista
+móvel (arrastar o fundo ou ✋ Mover):
+
+- **Ferramentas de desenho:** ／ Linha (Shift = ângulos de 15°), ⌒ Curva (arrasta do início ao fim, solta, curva com o
+  mouse e clica) e ✎ Lápis (à mão livre; ao soltar, o traço é simplificado e suavizado seguindo o caminho feito).
+- **Trilhos e trechos:** cada traço é um trecho. Começar ou terminar um traço na ponta de um trilho (círculo branco)
+  emenda; ligar o fim ao começo fecha o **circuito**. Trilhos podem se cruzar. Ao selecionar um trecho informa-se
+  **quantos metros ele representa** (o "*" no rótulo indica comprimento definido) — vale para o tempo de percurso.
+- **AGV (0,80 × 1,50 m):** clicado sobre um trilho, prende-se a ele e só anda sobre o caminho. Clicando nele:
+  velocidade (m/min), sentido (direita/esquerda dele), posição inicial, partida (s), comportamento no fim do trilho
+  (para, vai e volta, recomeça) e posição (atravessado ou comprido no sentido do trilho). Gira acompanhando o trilho
+  com o eixo no meio do AGV.
+- **Cores:** cada trilho tem uma cor (editável na tabela) e os AGVs ligados a ele usam a mesma cor.
+- **Colisões:** todos os AGVs são simulados no horizonte escolhido (passo de 0,1 s) e cada contato entre dois AGVs é
+  listado com instante, duração e local; clicar leva ao momento da colisão. ▶ Simular anima o fluxo.
+- ↶ Desfazer / Ctrl+Z, Delete apaga o selecionado, Esc cancela. Tudo fica salvo no PC e no `.json` (`agvCfg`).
+
+Observação: a posição desenhada é a usada para detectar colisões; o comprimento real de um trecho muda só o tempo
+de percurso. Para colisões fiéis, desenhe em escala (a grade tem 10 m por quadrado).
+
 ## Observação sobre a proteção
 
 A senha do download não fica mais em texto puro (agora é comparada por SHA-256), mas é uma barreira de uso casual:

@@ -95,6 +95,7 @@ const REFERENCE_FIXES = [
     replace: `        <h1 style="font-size:18px; letter-spacing:-0.01em;"><select class="title-select" id="appViewSelect" title="Trocar de página">
           <option value="telemetria">Telemetria ME1</option>
           <option value="engajamento">Engajamento</option>
+          <option value="agv">Fluxo de AGVs</option>
         </select></h1>` },
   { find: '  .toast-msg.show { opacity: 1; display: inline; }',
     replace: '  .toast-msg.show { opacity: 1; display: inline; }\n' + newSrc.split('\n').filter(l => l.startsWith('  .title-select')).join('\n') },
@@ -170,7 +171,7 @@ const READ_INTERNALS = {
     frames: r.frames, logsByProfile: r.logsByProfile, logsByCarIdx: r.logsByCarIdx, hourly: r.hourly,
     passByProfile: r.passByProfile, passByIdx: r.passByIdx,
     playback: { ...__ME1__.playback }, ui: (({ view, ...rest }) => rest)(__ME1__.ui),
-    config: (() => { const c = __ME1__.serialize().config; delete c.engCfg; return c; })()
+    config: (() => { const c = __ME1__.serialize().config; delete c.engCfg; delete c.agvCfg; return c; })()
   }; })()`
 };
 const SET_SIMTIME = {
@@ -499,11 +500,11 @@ class Session {
   }
 }
 
-/** Remove os dados da página Engajamento (só existem na versão nova) de um .json salvo/exportado. */
+/** Remove os dados das páginas Engajamento e Fluxo de AGVs (só existem na versão nova) de um .json salvo/exportado. */
 function withoutEngagement(text, indent) {
   if (!text) return text;
   const o = JSON.parse(text);
-  if (o && o.config) delete o.config.engCfg;
+  if (o && o.config) { delete o.config.engCfg; delete o.config.agvCfg; }
   return JSON.stringify(o, null, indent);
 }
 
@@ -1013,6 +1014,76 @@ async function engagementCheck(browser) {
   return problems;
 }
 
+/** Roteiro da página Fluxo de AGVs: desenho, circuito, AGVs, configuração, comprimento real, colisões e memória. */
+async function agvCheck(browser) {
+  const problems = [];
+  const expect = (cond, msg) => { if (!cond) problems.push(msg); };
+  const { page, ctx, errors } = await openPlain(browser, NEW_FILE);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.selectOption('#appViewSelect', 'agv');
+  let box;
+  const refresh = async () => { await page.locator('#agvCanvas').scrollIntoViewIfNeeded(); box = await page.locator('#agvCanvas').boundingBox(); };
+  const at = (x, y) => [box.x + box.width / 2 + x, box.y + box.height / 2 + y];   // px a partir do centro (0,0 m; 6 px/m)
+  const tool = async t => {
+    await refresh();
+    const y0 = box.y;
+    await page.locator(`#agvTools [data-arg="${t}"]`).click();
+    await refresh();
+    expect(Math.abs(box.y - y0) < 0.5, `trocar para "${t}" moveu o desenho ${box.y - y0}px`);
+  };
+  const stroke = async (a, b) => { await page.mouse.move(...at(...a)); await page.mouse.down(); await page.mouse.move(...at(...b), { steps: 6 }); await page.mouse.up(); };
+  const field = name => page.locator(`#agvPanel label:has(span:text-is("${name}"))`);
+  const set = async (name, v) => { const i = field(name).locator('input'); await i.fill(String(v)); await i.press('Enter'); };
+  const trilhos = () => page.evaluate(() => Array.from(document.querySelectorAll('#agvTrilhoBody tr')).map(tr => Array.from(tr.children).slice(2, 6).map(td => td.textContent).join('|')));
+
+  await tool('line');
+  await stroke([-300, -120], [300, -120]);
+  await stroke([300, -120], [300, 120]);
+  await stroke([300, 120], [-300, 120]);
+  await stroke([-300, 120], [-300, -120]);
+  await tool('pencil');
+  await page.mouse.move(...at(-400, 200));
+  await page.mouse.down();
+  for (let i = 0; i <= 30; i++) await page.mouse.move(...at(-400 + i * 25, 200 + Math.sin(i / 4) * 40));
+  await page.mouse.up();
+  let tl = await trilhos();
+  expect(tl[0] === '4|280,0 m|Circuito|0', `circuito de 4 linhas: ${tl[0]}`);
+  expect(tl.length === 2 && tl[1].endsWith('|Aberto|0'), `traço do lápis: ${tl[1]}`);
+  const pencilPts = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).config.agvCfg.trechos.at(-1), STORAGE_KEY);
+  expect(pencilPts.kind === 'path' && pencilPts.pts.length < 31, `lápis suavizado: ${pencilPts.kind}, ${pencilPts.pts.length} pontos`);
+
+  await tool('agv');
+  await page.mouse.click(...at(-100, -120));
+  await page.mouse.click(...at(100, -120));
+  await tool('select');
+  await page.locator('#agvAgvBody tr:nth-child(2)').click();
+  await field('Sentido').locator('select').selectOption('-1');
+  await set('Velocidade (m/min)', 40);
+  await refresh();
+  await page.mouse.click(...at(0, 120));
+  await set('Representa (m)', 25);
+  tl = await trilhos();
+  expect(tl[0] === '4|205,0 m|Circuito|2', `trecho representa 25 m: ${tl[0]}`);
+  await page.waitForFunction(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 5000 }).catch(() => {});
+  const nCol = await page.evaluate(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length);
+  expect(nCol >= 1, `AGVs em sentidos opostos no circuito devem colidir: ${nCol}`);
+
+  await page.mouse.move(...at(0, 0));
+  await page.mouse.wheel(0, -400);
+  const zoom = await page.evaluate(() => document.getElementById('agvZoomBadge').textContent);
+  expect(!zoom.includes('zoom 6,0'), `zoom com a roda: ${zoom}`);
+
+  await page.reload();
+  await page.selectOption('#appViewSelect', 'agv');
+  await page.waitForFunction(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 5000 }).catch(() => {});
+  expect(await page.evaluate(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length) === nCol, 'colisões após recarregar');
+  tl = await trilhos();
+  expect(tl.length === 2 && tl[0] === '4|205,0 m|Circuito|2', `após recarregar: ${tl}`);
+  expect(!errors.length, `erros: ${errors.join('; ')}`);
+  await ctx.close();
+  return problems;
+}
+
 // ── Configurações aleatórias (dentro dos limites dos sliders) ──
 function mulberry32(seed) {
   return () => {
@@ -1095,6 +1166,13 @@ try {
     const problems = await engagementCheck(browser);
     problems.forEach(pb => fail('engajamento', pb));
     log(`  ${problems.length ? '·' : '✔'} Página Engajamento (postos, planilha .xlsx, FOPs, quadro, memória)`);
+  }
+
+  if (!ONLY || ONLY === 'agv') {
+    checks++;
+    const problems = await agvCheck(browser);
+    problems.forEach(pb => fail('agv', pb));
+    log(`  ${problems.length ? '·' : '✔'} Página Fluxo de AGVs (desenho, circuito, AGVs, comprimento real, colisões, zoom, memória)`);
   }
 
   log('Cenários roteirizados');

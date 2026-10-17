@@ -160,6 +160,18 @@
   .eng-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
   .eng-chip { background: var(--card-inner); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 2px 7px; font-size: 10.5px; font-family: monospace; cursor: pointer; }
   .eng-chip:hover { background: rgba(239,68,68,0.18); }
+  /* Página Fluxo de AGVs */
+  .agv-stage { position: relative; }
+  #agvHint { flex: 1 1 320px; max-width: 62%; min-height: 2.8em; display: flex; align-items: center; justify-content: flex-end; text-align: right; line-height: 1.4; }   /* altura fixa: trocar de ferramenta não move o desenho */
+  #agvCanvas { height: 620px; touch-action: none; }
+  .agv-panel { position: absolute; top: 18px; right: 8px; width: 280px; max-height: calc(100% - 36px); overflow-y: auto; background: rgba(15,19,28,0.96); border: 1px solid rgba(96,165,250,0.45); border-radius: 10px; padding: 10px 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 7px; font-size: 11px; }
+  .agv-panel-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; color: var(--accent-light); font-family: monospace; font-size: 12px; }
+  .agv-panel-info { color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+  .agv-field { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); }
+  .agv-field .eng-input { width: 150px; }
+  .agv-color { width: 34px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
+  .agv-dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+  .agv-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin-top: 10px; }
   .eng-input { background: #0f131c; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: monospace; font-size: 11px; padding: 4px 6px; width: 90px; outline: none; }
   .eng-input:focus { border-color: var(--accent-light); }
   .eng-input.eng-name { width: 150px; }
@@ -234,6 +246,7 @@
         <h1 class="brand-title"><select class="title-select" id="appViewSelect" title="Trocar de página">
           <option value="telemetria">Telemetria ME1</option>
           <option value="engajamento">Engajamento</option>
+          <option value="agv">Fluxo de AGVs</option>
         </select></h1>
         <span class="badge badge-brand">XDF · X62</span>
         <span class="watermark-badge" title="Autoria e Propriedade Intelectual de Gabriel Ivasko">🛡️ Protegido por Criptografia</span>
@@ -691,6 +704,84 @@
 </div>
 </div>
 
+<!-- ═════════════════════════ PÁGINA FLUXO DE AGVs ═════════════════════════ -->
+<div id="view_agv" data-eq-skip hidden>
+<div class="card">
+  <div class="row-between">
+    <span class="section-label m-0 text-accent">Fluxo de AGVs — Trilhos, Trechos e Colisões</span>
+    <div class="btn-group" id="agvTools">
+      <button class="btn active" data-action="agvTool" data-arg="select" title="Selecionar e configurar trechos/AGVs; arraste o fundo para mover a vista">↖ Selecionar</button>
+      <button class="btn" data-action="agvTool" data-arg="line" title="Linha reta: clique e arraste (Shift = ângulos de 15°)">／ Linha</button>
+      <button class="btn" data-action="agvTool" data-arg="curve" title="Curva: arraste do início ao fim, solte, mova o mouse para curvar e clique">⌒ Curva</button>
+      <button class="btn" data-action="agvTool" data-arg="pencil" title="Lápis: desenho à mão livre, suavizado ao soltar">✎ Lápis</button>
+      <button class="btn" data-action="agvTool" data-arg="agv" title="AGV 0,80 × 1,50 m: clique sobre um trilho">▭ AGV</button>
+      <button class="btn" data-action="agvTool" data-arg="pan" title="Mover a vista">✋ Mover</button>
+    </div>
+  </div>
+  <div class="row-between mt-10">
+    <div class="btn-group">
+      <button class="btn-mem btn-mem-muted" data-action="agvUndo" title="Desfaz a última alteração (Ctrl+Z)">↶ Desfazer</button>
+      <button class="btn" data-action="agvZoomIn" title="Aproximar (ou roda do mouse)">＋</button>
+      <button class="btn" data-action="agvZoomOut" title="Afastar (ou roda do mouse)">－</button>
+      <button class="btn" data-action="agvFit" title="Enquadrar todos os trilhos e AGVs">⤢ Ajustar</button>
+      <span class="badge" id="agvZoomBadge">Grade: 10 m</span>
+    </div>
+    <span class="replicate-label" id="agvHint"></span>
+  </div>
+  <div class="agv-stage">
+    <canvas id="agvCanvas"></canvas>
+    <div class="agv-panel" id="agvPanel" hidden></div>
+  </div>
+  <div class="controls-bar">
+    <div class="btn-group">
+      <button class="btn" id="agvPlayBtn" data-action="agvPlay">▶ Simular</button>
+      <button class="btn" data-action="agvRestart">⏮ t = 0</button>
+      <span class="badge" id="agvTimeBadge">t = 0,0 s</span>
+      <select class="btn btn-select" id="agvSpeedSelect" title="Velocidade da animação">
+        <option value="1">1x</option>
+        <option value="2">2x</option>
+        <option value="5" selected>5x</option>
+        <option value="10">10x</option>
+        <option value="30">30x</option>
+      </select>
+    </div>
+    <div class="btn-group">
+      <span class="replicate-label">Horizonte da análise:</span>
+      <div class="pill-input-wrap"><input type="number" class="pill-input" id="agvDuration" min="10" max="7200" step="10" value="300"><span class="pill-unit">s</span></div>
+      <span class="badge" id="agvCollisionBadge">Sem colisões</span>
+    </div>
+  </div>
+  <input type="range" id="agvScrubber" min="0" max="300" step="0.1" value="0">
+  <div class="agv-tables">
+    <div>
+      <div class="section-label">🎨 Trilhos (cor = AGVs ligados a ele)</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Cor</th><th>Nome</th><th>Trechos</th><th>Comprimento real</th><th>Tipo</th><th>AGVs</th><th></th></tr></thead>
+          <tbody id="agvTrilhoBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <div class="section-label">▭ AGVs (clique para configurar)</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th></th><th>AGV</th><th>Trilho</th><th>Velocidade</th><th>Sentido</th><th>No fim</th></tr></thead>
+          <tbody id="agvAgvBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="section-label text-amber mt-10">⚠ Colisões entre AGVs (clique para ver o momento)</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>AGVs</th><th>Início</th><th>Duração</th><th>Local</th><th></th></tr></thead>
+      <tbody id="agvCollisionBody"></tbody>
+    </table>
+  </div>
+</div>
+</div>
+
 <div class="watermark-floating">🛡️ Telemetria ME1 • Autor: <b>Gabriel Ivasko</b></div>
 
 <script>
@@ -710,8 +801,9 @@
  *   8. Interface: campos, painéis, tabelas e badges
  *   9. Renderizador do canvas e player da animação
  *  10. Página Engajamento: carro estático (vista de cima) e postos de trabalho por passe
- *  11. Persistência (memória do PC, exportar/importar, migração de formatos antigos)
- *  12. Ações (delegação de eventos dos botões), proteção e inicialização
+ *  11. Página Fluxo de AGVs: trilhos desenhados, trechos com comprimento real, AGVs e colisões
+ *  12. Persistência (memória do PC, exportar/importar, migração de formatos antigos)
+ *  13. Ações (delegação de eventos dos botões), proteção e inicialização
  */
 (() => {
 'use strict';
@@ -906,6 +998,15 @@ function createDefaultConfig() {
       fopPostos: { 1: {}, 2: {}, 3: {}, 4: {} },
       // Planilha importada: { fileName, importedAt, passes: { n: { sheet, columns: [...], rows: [[...]] } } }
       sheet: null
+    },
+    // Página Fluxo de AGVs (ver AgvFlow): trechos desenhados, trilhos, AGVs, vista e horizonte da análise (s)
+    agvCfg: {
+      trilhos: [],
+      trechos: [],
+      agvs: [],
+      view: { cx: 0, cy: 0, zoom: 6 },
+      duration: 300,
+      nextId: 1
     }
   };
 }
@@ -3597,21 +3698,28 @@ function sheetsToPasses(sheets) {
 }
 
 /** Troca a página exibida (o título do cabeçalho é o seletor). */
+const VIEW_SUBTITLES = {
+  telemetria: 'Simulação de Fluxo, Trechos Dinâmicos, Passes de Operação, Plataforma e Servant Sincronizada',
+  engajamento: 'Posicionamento dos Postos de Trabalho por Passe — Carro Estático, Vista de Cima',
+  agv: 'Trilhos, Trechos com Comprimento Real, AGVs e Análise de Colisões'
+};
+
 function setView(view) {
-  ui.view = view === 'engajamento' ? 'engajamento' : 'telemetria';
-  const isTelemetry = ui.view === 'telemetria';
+  ui.view = VIEW_SUBTITLES[view] ? view : 'telemetria';
   $('appViewSelect').value = ui.view;
-  setHidden($('telemetryTopControls'), !isTelemetry);
-  setHidden($('view_telemetria'), !isTelemetry);
-  setHidden($('view_engajamento'), isTelemetry);
-  $('brandSub').textContent = isTelemetry
-    ? 'Simulação de Fluxo, Trechos Dinâmicos, Passes de Operação, Plataforma e Servant Sincronizada'
-    : 'Posicionamento dos Postos de Trabalho por Passe — Carro Estático, Vista de Cima';
-  if (isTelemetry) {
+  setHidden($('telemetryTopControls'), ui.view !== 'telemetria');
+  setHidden($('view_telemetria'), ui.view !== 'telemetria');
+  setHidden($('view_engajamento'), ui.view !== 'engajamento');
+  setHidden($('view_agv'), ui.view !== 'agv');
+  $('brandSub').textContent = VIEW_SUBTITLES[ui.view];
+  if (ui.view !== 'agv') AgvFlow.stop();
+  if (ui.view === 'telemetria') {
     Renderer.fitHeight();   // o canvas da telemetria ficou oculto: mede de novo
     Renderer.remeasure();
-  } else {
+  } else if (ui.view === 'engajamento') {
     Engagement.render();
+  } else {
+    AgvFlow.render();
   }
 }
 
@@ -4314,7 +4422,1071 @@ const Engagement = (() => {
 })();
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * 11. PERSISTÊNCIA (memória do PC, exportar / importar, migração de formatos antigos)
+ * 11. PÁGINA FLUXO DE AGVs (trilhos desenhados, trechos com comprimento real, AGVs e colisões)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Modelo (config.agvCfg), em metros, eixo y para baixo (como a tela):
+ *  - trecho: { id, kind: 'line' | 'curve' | 'path', pts: [[x, y], …], realLen: m | null }
+ *      line = 2 pontos; curve = [início, controle, fim] (Bézier quadrática); path = pontos do lápis (Catmull-Rom)
+ *  - trilho: { id, name, color, trechos: [ids na ordem de percurso], closed }
+ *  - agv:    { id, name, trilhoId | null, s0 (m reais desde o início do trilho), speed (m/min), dir (+1 direita / −1 esquerda),
+ *              endMode: 'stop' | 'pingpong' | 'loop', delay (s), orient: 'trans' (atravessado) | 'long', x, y, angle (se solto) }
+ */
+const AgvFlow = (() => {
+  const AGV_LONG = 1.5, AGV_SHORT = 0.8;       // dimensões do AGV (m)
+  const GRID = 10;                              // grade principal: 10 m por quadrado
+  const SNAP_PX = 12;                           // raio de emenda nas pontas dos trilhos (px)
+  const PICK_PX = 9;                            // tolerância para clicar num trecho (px)
+  const SIM_DT = 0.1;                           // passo da análise de colisões (s)
+  const PALETTE = ['#38bdf8', '#f59e0b', '#10b981', '#f472b6', '#a78bfa', '#facc15', '#fb923c', '#22d3ee', '#a3e635', '#f87171', '#e879f9', '#60a5fa'];
+  const END_MODES = { stop: 'Para no fim', pingpong: 'Vai e volta', loop: 'Recomeça no início' };
+
+  let canvas = null, ctx = null, W = 0, H = 0;
+  let tool = 'select';
+  let sel = null;            // { kind: 'trecho' | 'agv', id }
+  let draft = null;          // traço em andamento
+  let drag = null;           // { kind: 'pan' | 'agv', … }
+  let hoverSnap = null;      // ponta de trilho sob o ponteiro (para emendar)
+  let simTime = 0, playing = false, lastTs = 0, loopOn = false;
+  let collisions = [];       // [{ a, b, t0, t1, x, y }]
+  let geomCache = new Map(); // trilhoId → geometria
+  let drawQueued = false;
+  let analysisTimer = 0;
+  const undoStack = [];
+
+  const ac = () => config.agvCfg;
+  const view = () => ac().view;
+  const byId = (list, id) => list.find(o => o.id === id) || null;
+  const trecho = id => byId(ac().trechos, id);
+  const trilho = id => byId(ac().trilhos, id);
+  const agv = id => byId(ac().agvs, id);
+  const newId = () => ac().nextId++;
+  const fmt = (v, d = 2) => Fmt.comma(v, d);
+
+  /* ── Coordenadas e zoom ───────────────────────────────────────────────── */
+
+  const toPx = (x, y) => [(x - view().cx) * view().zoom + W / 2, (y - view().cy) * view().zoom + H / 2];
+  const toM = (px, py) => [(px - W / 2) / view().zoom + view().cx, (py - H / 2) / view().zoom + view().cy];
+
+  function zoomAt(factor, px = W / 2, py = H / 2) {
+    const [mx, my] = toM(px, py);
+    view().zoom = Math.min(300, Math.max(0.3, view().zoom * factor));
+    const [nx, ny] = toM(px, py);
+    view().cx += mx - nx;
+    view().cy += my - ny;
+    requestDraw();
+  }
+
+  /** Enquadra todos os trilhos e AGVs. */
+  function fit() {
+    const pts = [];
+    ac().trechos.forEach(t => pts.push(...t.pts));
+    ac().agvs.forEach(a => { const p = poseAt(a, 0); pts.push([p.x, p.y]); });
+    if (!pts.length) { Object.assign(view(), { cx: 0, cy: 0, zoom: 6 }); requestDraw(); return; }
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    view().cx = (x0 + x1) / 2;
+    view().cy = (y0 + y1) / 2;
+    view().zoom = Math.min(300, Math.max(0.3, Math.min((W - 80) / Math.max(5, x1 - x0), (H - 80) / Math.max(5, y1 - y0))));
+    requestDraw();
+  }
+
+  /* ── Geometria dos trechos e trilhos ──────────────────────────────────── */
+
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const polyLen = pts => pts.reduce((acc, p, i) => (i ? acc + dist(pts[i - 1], p) : 0), 0);
+
+  /** Pontos que descrevem o trecho (linha reta, curva de Bézier ou traço suavizado). */
+  function trechoSamples(tr) {
+    const p = tr.pts;
+    if (tr.kind === 'line') return [p[0], p[1]];
+    if (tr.kind === 'curve') {
+      const n = Math.min(400, Math.max(16, Math.ceil((dist(p[0], p[1]) + dist(p[0], p[2])) / 0.25)));
+      const out = [];
+      for (let i = 0; i <= n; i++) {
+        const t = i / n, u = 1 - t;
+        out.push([u * u * p[0][0] + 2 * u * t * p[1][0] + t * t * p[2][0], u * u * p[0][1] + 2 * u * t * p[1][1] + t * t * p[2][1]]);
+      }
+      return out;
+    }
+    // path: Catmull-Rom pelos pontos do traço
+    if (p.length < 3) return p.slice();
+    const out = [p[0]];
+    for (let i = 0; i < p.length - 1; i++) {
+      const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p[i + 1];
+      const steps = Math.min(40, Math.max(4, Math.ceil(dist(p1, p2) / 0.25)));
+      for (let k = 1; k <= steps; k++) {
+        const t = k / steps, t2 = t * t, t3 = t2 * t;
+        out.push([0, 1].map(j => 0.5 * ((2 * p1[j]) + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
+      }
+    }
+    return out;
+  }
+
+  const trechoGeoLen = tr => polyLen(trechoSamples(tr));
+  const trechoRealLen = tr => (Number.isFinite(tr.realLen) && tr.realLen > 0 ? tr.realLen : trechoGeoLen(tr));
+
+  /**
+   * Geometria do trilho: polilinha contínua + tabelas de comprimento desenhado (geo) e real por trecho.
+   * O comprimento real só muda o TEMPO de percurso; a posição desenhada (e as colisões) seguem o desenho.
+   */
+  function trilhoGeom(tl) {
+    if (geomCache.has(tl.id)) return geomCache.get(tl.id);
+    const pts = [], cum = [], segs = [];
+    let geo = 0, real = 0;
+    tl.trechos.map(trecho).filter(Boolean).forEach(tr => {
+      const s = trechoSamples(tr);
+      const g0 = geo;
+      s.forEach((p, i) => {
+        if (pts.length && i === 0) return;   // ponto de emenda já incluído
+        if (pts.length) geo += dist(pts[pts.length - 1], p);
+        pts.push(p);
+        cum.push(geo);
+      });
+      const r = trechoRealLen(tr);
+      segs.push({ id: tr.id, geo0: g0, geoLen: geo - g0, real0: real, realLen: r });
+      real += r;
+    });
+    const g = { pts, cum, segs, geoLen: geo, realLen: real, closed: !!tl.closed && pts.length > 2 };
+    geomCache.set(tl.id, g);
+    return g;
+  }
+
+  const invalidate = () => { geomCache = new Map(); scheduleAnalysis(); };
+
+  function pointAtGeo(gm, g) {
+    const { pts, cum } = gm;
+    if (pts.length < 2) return pts[0] ? [pts[0][0], pts[0][1]] : [0, 0];
+    g = Math.min(gm.geoLen, Math.max(0, g));
+    let lo = 0, hi = cum.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= g) lo = mid; else hi = mid; }
+    const seg = cum[hi] - cum[lo] || 1;
+    const f = (g - cum[lo]) / seg;
+    return [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * f, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * f];
+  }
+
+  function realToGeo(gm, d) {
+    const s = gm.segs.find((sg, i) => d < sg.real0 + sg.realLen || i === gm.segs.length - 1);
+    if (!s) return 0;
+    return s.geo0 + Math.min(1, Math.max(0, (d - s.real0) / (s.realLen || 1))) * s.geoLen;
+  }
+
+  function geoToReal(gm, g) {
+    const s = gm.segs.find((sg, i) => g < sg.geo0 + sg.geoLen || i === gm.segs.length - 1);
+    if (!s) return 0;
+    return s.real0 + Math.min(1, Math.max(0, (g - s.geo0) / (s.geoLen || 1))) * s.realLen;
+  }
+
+  /** Ponto do trilho mais próximo de (x, y): { g, dist, x, y }. */
+  function nearestOnTrilho(gm, x, y) {
+    let best = null;
+    for (let i = 1; i < gm.pts.length; i++) {
+      const [ax, ay] = gm.pts[i - 1], [bx, by] = gm.pts[i];
+      const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
+      const f = Math.min(1, Math.max(0, ((x - ax) * dx + (y - ay) * dy) / l2));
+      const px = ax + dx * f, py = ay + dy * f, dd = Math.hypot(x - px, y - py);
+      if (!best || dd < best.dist) best = { g: gm.cum[i - 1] + (gm.cum[i] - gm.cum[i - 1]) * f, dist: dd, x: px, y: py };
+    }
+    return best;
+  }
+
+  function nearestTrilho(x, y, maxM) {
+    let best = null;
+    ac().trilhos.forEach(tl => {
+      const gm = trilhoGeom(tl);
+      if (gm.pts.length < 2) return;
+      const n = nearestOnTrilho(gm, x, y);
+      if (n && n.dist <= maxM && (!best || n.dist < best.n.dist)) best = { tl, gm, n };
+    });
+    return best;
+  }
+
+  /* ── Movimento dos AGVs ───────────────────────────────────────────────── */
+
+  /** Distância real percorrida no trilho no instante t (já com partida, sentido e regra de fim). */
+  function distanceAt(a, gm, t) {
+    const L = gm.realLen;
+    if (L <= 0) return 0;
+    const run = Math.max(0, t - (a.delay || 0));
+    let d = a.s0 + a.dir * (a.speed / 60) * run;
+    if (gm.closed || a.endMode === 'loop') d = ((d % L) + L) % L;
+    else if (a.endMode === 'pingpong') {
+      const p = 2 * L, m = ((d % p) + p) % p;
+      d = m <= L ? m : p - m;
+    } else d = Math.min(L, Math.max(0, d));
+    return d;
+  }
+
+  const halfAlong = a => (a.orient === 'long' ? AGV_LONG : AGV_SHORT) / 2;   // meia medida do AGV no sentido do trilho
+
+  /**
+   * Pose do AGV: centro (eixo de rotação no MEIO) sobre o trilho; a direção é a da corda entre os pontos do trilho
+   * meia-medida à frente e atrás (corpo rígido, como a plataforma da Telemetria).
+   */
+  function poseAt(a, t) {
+    const tl = a.trilhoId != null ? trilho(a.trilhoId) : null;
+    const gm = tl ? trilhoGeom(tl) : null;
+    if (!gm || gm.pts.length < 2) return { x: a.x || 0, y: a.y || 0, ang: a.angle || 0, move: 0, onTrack: false };
+    const d = distanceAt(a, gm, t);
+    const g = realToGeo(gm, d);
+    const h = halfAlong(a);
+    const wrap = v => (gm.closed ? ((v % gm.geoLen) + gm.geoLen) % gm.geoLen : v);
+    const [x, y] = pointAtGeo(gm, g);
+    const f = pointAtGeo(gm, wrap(g + h)), r = pointAtGeo(gm, wrap(g - h));
+    const ang = Math.atan2(f[1] - r[1], f[0] - r[0]);
+    const dNext = distanceAt(a, gm, t + 0.05);
+    let move = Math.sign(dNext - d);
+    if (gm.closed && Math.abs(dNext - d) > gm.realLen / 2) move = -move;   // virada do circuito
+    const running = t >= (a.delay || 0) && move !== 0;
+    return { x, y, ang, move: running ? move : 0, onTrack: true };
+  }
+
+  /** Retângulo do AGV: eixo u = sentido do trilho. */
+  function boxOf(a, p) {
+    const hu = halfAlong(a), hv = (a.orient === 'long' ? AGV_SHORT : AGV_LONG) / 2;
+    return { x: p.x, y: p.y, ux: Math.cos(p.ang), uy: Math.sin(p.ang), hu, hv };
+  }
+
+  /** Teste de sobreposição de dois retângulos girados (eixos separadores). */
+  function boxesOverlap(A, B) {
+    const axes = [[A.ux, A.uy], [-A.uy, A.ux], [B.ux, B.uy], [-B.uy, B.ux]];
+    const dx = B.x - A.x, dy = B.y - A.y;
+    return axes.every(([ax, ay]) => {
+      const rA = A.hu * Math.abs(A.ux * ax + A.uy * ay) + A.hv * Math.abs(-A.uy * ax + A.ux * ay);
+      const rB = B.hu * Math.abs(B.ux * ax + B.uy * ay) + B.hv * Math.abs(-B.uy * ax + B.ux * ay);
+      return Math.abs(dx * ax + dy * ay) <= rA + rB;
+    });
+  }
+
+  /** Análise de colisões: simula todos os AGVs no horizonte configurado e registra cada intervalo de contato. */
+  function analyze() {
+    const list = ac().agvs;
+    const dur = Math.max(1, Number(ac().duration) || 300);
+    const open = new Map();
+    const out = [];
+    const reach = Math.hypot(AGV_LONG, AGV_SHORT);
+    for (let t = 0; t <= dur + 1e-9; t += SIM_DT) {
+      const boxes = list.map(a => boxOf(a, poseAt(a, t)));
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const A = boxes[i], B = boxes[j], key = `${list[i].id}|${list[j].id}`;
+          const hit = Math.abs(A.x - B.x) <= reach && Math.abs(A.y - B.y) <= reach && boxesOverlap(A, B);
+          if (hit && !open.has(key)) {
+            const ev = { a: list[i].id, b: list[j].id, t0: t, t1: t, x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+            open.set(key, ev);
+            out.push(ev);
+          } else if (hit) open.get(key).t1 = t;
+          else open.delete(key);
+        }
+      }
+      if (out.length >= 500) break;
+    }
+    collisions = out;
+    renderCollisions();
+    requestDraw();
+  }
+
+  function scheduleAnalysis() {
+    clearTimeout(analysisTimer);
+    analysisTimer = setTimeout(analyze, 150);
+  }
+
+  const collidingAt = t => {
+    const set = new Set();
+    collisions.forEach(c => { if (t >= c.t0 - 1e-9 && t <= c.t1 + SIM_DT) { set.add(c.a); set.add(c.b); } });
+    return set;
+  };
+
+  /* ── Edição (trechos, trilhos, AGVs) ──────────────────────────────────── */
+
+  function pushUndo() {
+    const snap = { ...ac() };
+    delete snap.view;   // desfazer não mexe no zoom
+    undoStack.push(JSON.stringify(snap));
+    if (undoStack.length > 80) undoStack.shift();
+  }
+
+  function undo() {
+    const snap = undoStack.pop();
+    if (!snap) { showMemToast('Nada para desfazer', true); return; }
+    Object.assign(ac(), JSON.parse(snap));
+    sel = null;
+    changed();
+  }
+
+  /** Depois de qualquer alteração: refaz a geometria, as listas, a análise e salva. */
+  function changed() {
+    invalidate();
+    renderLists();
+    renderPanel();
+    requestDraw();
+    saveToLocalMemory();
+  }
+
+  const trilhoStart = tl => { const tr = trecho(tl.trechos[0]); return tr && tr.pts[0]; };
+  const trilhoEnd = tl => { const tr = trecho(tl.trechos[tl.trechos.length - 1]); return tr && tr.pts[tr.pts.length - 1]; };
+  const reversePts = pts => pts.slice().reverse();
+
+  /** Ponta livre de trilho perto de (x, y) — para emendar o próximo traço. */
+  function findEndpoint(x, y) {
+    const tolM = SNAP_PX / view().zoom;
+    let best = null;
+    ac().trilhos.forEach(tl => {
+      if (tl.closed || !tl.trechos.length) return;
+      [['start', trilhoStart(tl)], ['end', trilhoEnd(tl)]].forEach(([which, p]) => {
+        if (!p) return;
+        const d = Math.hypot(p[0] - x, p[1] - y);
+        if (d <= tolM && (!best || d < best.d)) best = { tl, which, p, d };
+      });
+    });
+    return best;
+  }
+
+  /** Posição dos AGVs presos aos trilhos (para recolocá-los no mesmo lugar depois de editar a geometria). */
+  const capturePlaces = () => ac().agvs.filter(a => a.trilhoId != null).map(a => ({ a, p: poseAt(a, 0) }));
+
+  function restorePlaces(places) {
+    geomCache = new Map();
+    places.forEach(({ a, p }) => {
+      const near = nearestTrilho(p.x, p.y, 3);
+      if (near) {
+        a.trilhoId = near.tl.id;
+        a.s0 = geoToReal(near.gm, near.n.g);
+      } else {
+        Object.assign(a, { trilhoId: null, x: p.x, y: p.y, angle: p.ang });
+      }
+    });
+  }
+
+  /** Grava um traço novo: emenda na ponta de um trilho (início/fim) ou cria um trilho; fecha o circuito se encontrar. */
+  function commitTrecho(kind, pts) {
+    if (polyLen(kind === 'curve' ? [pts[0], pts[2]] : pts) < 0.2) return;
+    pushUndo();
+    const places = capturePlaces();
+    const first = pts[0], last = pts[pts.length - 1];
+    const a = findEndpoint(first[0], first[1]);
+    const b = findEndpoint(last[0], last[1]);
+    const tr = { id: newId(), kind, pts: pts.map(p => [p[0], p[1]]), realLen: null };
+    let tl = null;
+    if (a && a.which === 'end') { tl = a.tl; tr.pts[0] = a.p.slice(); tl.trechos.push(tr.id); }
+    else if (a && a.which === 'start') { tl = a.tl; tr.pts = reversePts(tr.pts); tr.pts[tr.pts.length - 1] = a.p.slice(); tl.trechos.unshift(tr.id); }
+    else if (b && b.which === 'start') { tl = b.tl; tr.pts[tr.pts.length - 1] = b.p.slice(); tl.trechos.unshift(tr.id); }
+    else if (b && b.which === 'end') { tl = b.tl; tr.pts = reversePts(tr.pts); tr.pts[0] = b.p.slice(); tl.trechos.push(tr.id); }
+    else {
+      tl = { id: newId(), name: `Trilho ${ac().trilhos.length + 1}`, color: PALETTE[ac().trilhos.length % PALETTE.length], trechos: [tr.id], closed: false };
+      ac().trilhos.push(tl);
+    }
+    ac().trechos.push(tr);
+    // fecha o circuito quando a outra ponta do traço cai no começo/fim do mesmo trilho
+    const s = trilhoStart(tl), e = trilhoEnd(tl);
+    if (tl.trechos.length > 1 && s && e && Math.hypot(s[0] - e[0], s[1] - e[1]) <= SNAP_PX / view().zoom) {
+      const lastTr = trecho(tl.trechos[tl.trechos.length - 1]);
+      lastTr.pts[lastTr.pts.length - 1] = s.slice();
+      tl.closed = true;
+    }
+    restorePlaces(places);
+    sel = { kind: 'trecho', id: tr.id };
+    changed();
+  }
+
+  function deleteTrecho(id) {
+    const tl = ac().trilhos.find(t => t.trechos.includes(id));
+    pushUndo();
+    const places = capturePlaces();
+    ac().trechos = ac().trechos.filter(t => t.id !== id);
+    if (tl) {
+      const i = tl.trechos.indexOf(id);
+      if (tl.closed) {   // circuito aberto no trecho removido: passa a começar logo depois dele
+        tl.trechos = [...tl.trechos.slice(i + 1), ...tl.trechos.slice(0, i)];
+        tl.closed = false;
+      } else {
+        const after = tl.trechos.slice(i + 1);
+        tl.trechos = tl.trechos.slice(0, i);
+        if (after.length) {
+          ac().trilhos.push({ id: newId(), name: `${tl.name} (parte 2)`, color: PALETTE[ac().trilhos.length % PALETTE.length], trechos: after, closed: false });
+        }
+      }
+      if (!tl.trechos.length) ac().trilhos = ac().trilhos.filter(t => t !== tl);
+    }
+    restorePlaces(places);
+    sel = null;
+    changed();
+  }
+
+  function deleteTrilho(id) {
+    const tl = trilho(id);
+    if (!tl) return;
+    pushUndo();
+    const places = capturePlaces().filter(pl => pl.a.trilhoId === id);
+    ac().trechos = ac().trechos.filter(t => !tl.trechos.includes(t.id));
+    ac().trilhos = ac().trilhos.filter(t => t.id !== id);
+    places.forEach(({ a, p }) => Object.assign(a, { trilhoId: null, x: p.x, y: p.y, angle: p.ang }));
+    sel = null;
+    changed();
+  }
+
+  function addAgv(x, y) {
+    pushUndo();
+    const n = ac().agvs.length;
+    const a = { id: newId(), name: `AGV ${n + 1}`, trilhoId: null, s0: 0, speed: 30, dir: 1, endMode: 'stop', delay: 0, orient: 'trans', x, y, angle: 0 };
+    const near = nearestTrilho(x, y, 20 / view().zoom + 0.5);
+    if (near) { a.trilhoId = near.tl.id; a.s0 = geoToReal(near.gm, near.n.g); }
+    ac().agvs.push(a);
+    sel = { kind: 'agv', id: a.id };
+    changed();
+  }
+
+  function deleteAgv(id) {
+    pushUndo();
+    ac().agvs = ac().agvs.filter(a => a.id !== id);
+    sel = null;
+    changed();
+  }
+
+  function deleteSelected() {
+    if (!sel) return;
+    if (sel.kind === 'agv') deleteAgv(sel.id);
+    else if (sel.kind === 'trecho') deleteTrecho(sel.id);
+  }
+
+  /* ── Desenho ──────────────────────────────────────────────────────────── */
+
+  function measure() {
+    const dpr = window.devicePixelRatio || 1;
+    const r = canvas.getBoundingClientRect();
+    W = r.width;
+    H = r.height;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function drawGrid() {
+    const z = view().zoom;
+    const [x0, y0] = toM(0, 0), [x1, y1] = toM(W, H);
+    const lines = (step, color, labels) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) { const [px] = toPx(x, 0); ctx.moveTo(Math.round(px) + 0.5, 0); ctx.lineTo(Math.round(px) + 0.5, H); }
+      for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) { const [, py] = toPx(0, y); ctx.moveTo(0, Math.round(py) + 0.5); ctx.lineTo(W, Math.round(py) + 0.5); }
+      ctx.stroke();
+      if (!labels) return;
+      const every = step * Math.max(1, Math.ceil(50 / (step * z)));   // rótulos sem encavalar
+      ctx.fillStyle = '#5b6578';
+      ctx.font = '9.5px monospace';
+      ctx.textAlign = 'left';
+      for (let x = Math.ceil(x0 / every) * every; x <= x1; x += every) ctx.fillText(`${Math.round(x)}m`, toPx(x, 0)[0] + 3, 11);
+      for (let y = Math.ceil(y0 / every) * every; y <= y1; y += every) ctx.fillText(`${Math.round(y)}m`, 3, toPx(0, y)[1] - 3);
+    };
+    if (z >= 8) lines(1, 'rgba(34,41,58,0.45)', false);
+    lines(GRID, '#262f42', true);
+  }
+
+  function strokePoly(pts, width, color, dash) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.setLineDash(dash || []);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    pts.forEach((p, i) => { const [x, y] = toPx(p[0], p[1]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function label(text, px, py, color, bg) {
+    ctx.font = 'bold 10px monospace';
+    const w = ctx.measureText(text).width + 10;
+    ctx.fillStyle = bg || 'rgba(11,13,18,0.85)';
+    ctx.beginPath(); ctx.roundRect(px - w / 2, py - 8, w, 16, 6); ctx.fill();
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.fillText(text, px, py + 3.5);
+  }
+
+  function drawTrilhos() {
+    ac().trilhos.forEach(tl => {
+      tl.trechos.map(trecho).filter(Boolean).forEach(tr => {
+        const s = trechoSamples(tr);
+        const isSel = sel && sel.kind === 'trecho' && sel.id === tr.id;
+        if (isSel) strokePoly(s, 9, 'rgba(255,255,255,0.35)');
+        strokePoly(s, isSel ? 4 : 3, tl.color);
+        const mid = s[Math.floor(s.length / 2)];
+        if (isSel || view().zoom >= 4) {
+          const [mx, my] = toPx(mid[0], mid[1]);
+          const real = trechoRealLen(tr), custom = Number.isFinite(tr.realLen) && tr.realLen > 0;
+          label(`${fmt(real, 1)} m${custom ? ' *' : ''}`, mx, my - 12, isSel ? '#ffffff' : tl.color);
+        }
+      });
+      // setas de sentido do trilho e pontas
+      const gm = trilhoGeom(tl);
+      if (gm.pts.length < 2) return;
+      const stepM = Math.max(GRID / 2, 120 / view().zoom);
+      ctx.fillStyle = tl.color;
+      for (let g = stepM / 2; g < gm.geoLen; g += stepM) {
+        const p = pointAtGeo(gm, g), q = pointAtGeo(gm, Math.min(gm.geoLen, g + 0.01 + 1 / view().zoom));
+        const a = Math.atan2(q[1] - p[1], q[0] - p[0]);
+        const [px, py] = toPx(p[0], p[1]);
+        ctx.save(); ctx.translate(px, py); ctx.rotate(a);
+        ctx.beginPath(); ctx.moveTo(5, 0); ctx.lineTo(-4, -4); ctx.lineTo(-4, 4); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      if (!tl.closed) {
+        [trilhoStart(tl), trilhoEnd(tl)].forEach((p, i) => {
+          const [px, py] = toPx(p[0], p[1]);
+          ctx.fillStyle = i ? '#0b0d12' : tl.color;
+          ctx.strokeStyle = tl.color;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(px, py, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        });
+      }
+    });
+  }
+
+  function drawAgvs() {
+    const hits = collidingAt(simTime);
+    ac().agvs.forEach(a => {
+      const p = poseAt(a, simTime);
+      const b = boxOf(a, p);
+      const color = a.trilhoId != null && trilho(a.trilhoId) ? trilho(a.trilhoId).color : '#64748b';
+      const [cx, cy] = toPx(p.x, p.y);
+      const z = view().zoom;
+      const hu = Math.max(3, b.hu * z), hv = Math.max(2, b.hv * z);
+      const isSel = sel && sel.kind === 'agv' && sel.id === a.id;
+      const hit = hits.has(a.id);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(p.ang);
+      ctx.fillStyle = hit ? '#ef4444' : color;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.roundRect(-hu, -hv, 2 * hu, 2 * hv, Math.min(3, hv)); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = hit ? '#fecaca' : (isSel ? '#ffffff' : 'rgba(11,13,18,0.9)');
+      ctx.lineWidth = isSel || hit ? 2.5 : 1.5;
+      ctx.stroke();
+      // frente do AGV (atravessado: lado esquerdo do trilho; longitudinal: sentido do trilho)
+      ctx.fillStyle = 'rgba(11,13,18,0.75)';
+      if (a.orient === 'long') ctx.fillRect(hu - Math.max(1.5, hu * 0.2), -hv, Math.max(1.5, hu * 0.2), 2 * hv);
+      else ctx.fillRect(-hu, -hv, 2 * hu, Math.max(1.5, hv * 0.2));
+      // seta do movimento (no sentido do trilho)
+      const dir = p.move || a.dir;
+      if (hu > 5) {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(dir * hu * 0.7, 0); ctx.lineTo(-dir * hu * 0.1, -hv * 0.45); ctx.lineTo(-dir * hu * 0.1, hv * 0.45);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      if (z >= 3 || isSel) label(`${hit ? '⚠ ' : ''}${a.name}`, cx, cy - Math.max(hu, hv) - 12, hit ? '#fca5a5' : '#f1f5f9');
+    });
+  }
+
+  function drawDraft() {
+    if (hoverSnap) {
+      const [px, py] = toPx(hoverSnap.p[0], hoverSnap.p[1]);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(px, py, SNAP_PX, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (!draft) return;
+    const pts = draft.kind === 'curve' ? trechoSamples({ kind: 'curve', pts: [draft.a, draft.c || mid(draft.a, draft.b), draft.b] })
+      : draft.kind === 'line' ? [draft.a, draft.b] : draft.pts;
+    strokePoly(pts, 2.5, '#e2e8f0', [6, 5]);
+    if (draft.kind !== 'pencil') {
+      const len = draft.kind === 'line' ? dist(draft.a, draft.b) : polyLen(pts);
+      const end = pts[pts.length - 1];
+      const [px, py] = toPx(end[0], end[1]);
+      label(`${fmt(len, 2)} m`, px + 30, py - 14, '#e2e8f0');
+    }
+  }
+
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+
+  function draw() {
+    drawQueued = false;
+    if (!canvas || ui.view !== 'agv') return;
+    measure();
+    if (!W || !H) return;
+    ctx.clearRect(0, 0, W, H);
+    drawGrid();
+    drawTrilhos();
+    drawAgvs();
+    drawDraft();
+    // escala
+    const z = view().zoom, barM = GRID * Math.max(1, Math.round(80 / (GRID * z)));
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillRect(14, H - 18, barM * z, 3);
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${barM} m`, 14, H - 23);
+    $('agvZoomBadge').textContent = `Grade: 10 m · zoom ${fmt(z, 1)} px/m`;
+    $('agvTimeBadge').textContent = `t = ${fmt(simTime, 1)} s`;
+    $('agvScrubber').value = simTime;
+  }
+
+  function requestDraw() {
+    if (drawQueued) return;
+    drawQueued = true;
+    requestAnimationFrame(draw);
+  }
+
+  /* ── Simulação animada ────────────────────────────────────────────────── */
+
+  function tick(ts) {
+    if (!loopOn) return;
+    const dt = lastTs ? (ts - lastTs) / 1000 : 0;
+    lastTs = ts;
+    if (playing && ui.view === 'agv') {
+      simTime += dt * Number($('agvSpeedSelect').value || 1);
+      const dur = Math.max(1, Number(ac().duration) || 300);
+      if (simTime > dur) simTime = 0;
+      draw();
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function setPlaying(on) {
+    playing = on;
+    $('agvPlayBtn').textContent = on ? '⏸ Pausar' : '▶ Simular';
+    $('agvPlayBtn').classList.toggle('active', on);
+    lastTs = 0;
+    if (on && !loopOn) { loopOn = true; requestAnimationFrame(tick); }
+  }
+
+  const setTime = t => { simTime = Math.max(0, t); requestDraw(); };
+
+  /* ── Ferramentas e ponteiro ───────────────────────────────────────────── */
+
+  const HINTS = {
+    select: 'Clique num trecho ou AGV para configurar · arraste um AGV para outro ponto/trilho · arraste o fundo para mover a vista · Delete apaga o selecionado',
+    line: 'Linha: clique e arraste do início ao fim. Começar ou terminar na ponta de um trilho emenda (círculo branco)',
+    curve: 'Curva: arraste do início ao fim, solte e mova o mouse para curvar; clique para fixar (Esc cancela)',
+    pencil: 'Lápis: desenhe segurando o botão; ao soltar o traço é suavizado seguindo o seu caminho',
+    agv: 'AGV (0,80 × 1,50 m): clique sobre um trilho para posicioná-lo nele',
+    pan: 'Mover: arraste para deslocar a vista · roda do mouse aproxima/afasta'
+  };
+
+  function setTool(t) {
+    tool = HINTS[t] ? t : 'select';
+    draft = null;
+    document.querySelectorAll('#agvTools [data-arg]').forEach(b => b.classList.toggle('active', b.dataset.arg === tool));
+    $('agvHint').textContent = HINTS[tool];
+    canvas.style.cursor = tool === 'pan' ? 'grab' : (tool === 'select' ? 'default' : 'crosshair');
+    requestDraw();
+  }
+
+  const pointer = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+
+  /** Elemento sob o ponteiro: AGV (por cima) ou trecho. */
+  function pick(px, py) {
+    for (let i = ac().agvs.length - 1; i >= 0; i--) {
+      const a = ac().agvs[i], p = poseAt(a, simTime), b = boxOf(a, p);
+      const [mx, my] = toM(px, py), dx = mx - b.x, dy = my - b.y;
+      const pad = 4 / view().zoom;
+      if (Math.abs(dx * b.ux + dy * b.uy) <= b.hu + pad && Math.abs(-dx * b.uy + dy * b.ux) <= b.hv + pad) return { kind: 'agv', id: a.id };
+    }
+    let best = null;
+    ac().trechos.forEach(tr => {
+      const s = trechoSamples(tr);
+      for (let i = 1; i < s.length; i++) {
+        const [ax, ay] = toPx(s[i - 1][0], s[i - 1][1]), [bx, by] = toPx(s[i][0], s[i][1]);
+        const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
+        const f = Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy) / l2));
+        const d = Math.hypot(px - (ax + dx * f), py - (ay + dy * f));
+        if (d <= PICK_PX && (!best || d < best.d)) best = { kind: 'trecho', id: tr.id, d };
+      }
+    });
+    return best && { kind: best.kind, id: best.id };
+  }
+
+  /** Ponto do traço: emenda na ponta de um trilho, se estiver perto. */
+  function snapPoint(m) {
+    const ep = findEndpoint(m[0], m[1]);
+    hoverSnap = ep;
+    return ep ? ep.p.slice() : m;
+  }
+
+  /** Simplificação do traço do lápis (Ramer–Douglas–Peucker). */
+  function simplify(pts, eps) {
+    if (pts.length < 3) return pts;
+    const [a, b] = [pts[0], pts[pts.length - 1]];
+    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+    let idx = 0, maxD = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const d = Math.abs(dy * pts[i][0] - dx * pts[i][1] + b[0] * a[1] - b[1] * a[0]) / l;
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD <= eps) return [a, b];
+    return [...simplify(pts.slice(0, idx + 1), eps).slice(0, -1), ...simplify(pts.slice(idx), eps)];
+  }
+
+  function onDown(e) {
+    const [px, py] = pointer(e);
+    const m = toM(px, py);
+    if (e.button === 1 || e.button === 2 || tool === 'pan') {
+      drag = { kind: 'pan', px, py, cx: view().cx, cy: view().cy };
+    } else if (tool === 'select') {
+      const hit = pick(px, py);
+      sel = hit;
+      if (hit && hit.kind === 'agv') {
+        pushUndo();
+        drag = { kind: 'agv', id: hit.id, moved: false };
+      } else if (!hit) {
+        drag = { kind: 'pan', px, py, cx: view().cx, cy: view().cy };
+      }
+      renderPanel();
+      renderLists();
+    } else if (tool === 'line') {
+      const a = snapPoint(m);
+      draft = { kind: 'line', a, b: a.slice() };
+    } else if (tool === 'curve') {
+      if (draft && draft.kind === 'curve' && draft.phase === 'bend') {
+        commitTrecho('curve', [draft.a, draft.c || mid(draft.a, draft.b), draft.b]);
+        draft = null;
+        return;
+      }
+      const a = snapPoint(m);
+      draft = { kind: 'curve', phase: 'span', a, b: a.slice(), c: null };
+    } else if (tool === 'pencil') {
+      draft = { kind: 'pencil', pts: [snapPoint(m)] };
+    } else if (tool === 'agv') {
+      addAgv(m[0], m[1]);
+      return;
+    }
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ponteiro já liberado */ }
+    e.preventDefault();
+    requestDraw();
+  }
+
+  function onMove(e) {
+    const [px, py] = pointer(e);
+    const m = toM(px, py);
+    if (drag && drag.kind === 'pan') {
+      view().cx = drag.cx - (px - drag.px) / view().zoom;
+      view().cy = drag.cy - (py - drag.py) / view().zoom;
+      requestDraw();
+      return;
+    }
+    if (drag && drag.kind === 'agv') {
+      const a = agv(drag.id);
+      const near = nearestTrilho(m[0], m[1], 20 / view().zoom + 0.5);
+      if (near) {
+        a.trilhoId = near.tl.id;
+        a.s0 = geoToReal(near.gm, near.n.g);
+        a.delay = a.delay || 0;
+        simTime = 0;
+      } else {
+        Object.assign(a, { trilhoId: null, x: m[0], y: m[1] });
+      }
+      drag.moved = true;
+      requestDraw();
+      return;
+    }
+    hoverSnap = null;
+    if (tool === 'line' || tool === 'curve' || tool === 'pencil') {
+      if (!draft) snapPoint(m);   // mostra onde vai emendar
+      else if (draft.kind === 'line') {
+        let b = snapPoint(m);
+        if (e.shiftKey && b === m) {   // Shift: ângulos múltiplos de 15°
+          const ang = Math.round(Math.atan2(m[1] - draft.a[1], m[0] - draft.a[0]) / (Math.PI / 12)) * (Math.PI / 12);
+          const l = dist(draft.a, m);
+          b = [draft.a[0] + l * Math.cos(ang), draft.a[1] + l * Math.sin(ang)];
+        }
+        draft.b = b;
+      } else if (draft.kind === 'curve') {
+        if (draft.phase === 'span') draft.b = snapPoint(m);
+        else draft.c = [2 * m[0] - (draft.a[0] + draft.b[0]) / 2, 2 * m[1] - (draft.a[1] + draft.b[1]) / 2];   // curva passa pelo cursor
+      } else if (draft.kind === 'pencil') {
+        const last = draft.pts[draft.pts.length - 1];
+        if (dist(last, m) * view().zoom >= 3) draft.pts.push(m);
+        snapPoint(m);
+      }
+      requestDraw();
+    } else if (tool === 'select') {
+      const hit = pick(px, py);
+      canvas.style.cursor = hit ? (hit.kind === 'agv' ? 'grab' : 'pointer') : 'default';
+    }
+  }
+
+  function onUp(e) {
+    const [px, py] = pointer(e);
+    const m = toM(px, py);
+    if (drag) {
+      if (drag.kind === 'agv') {
+        if (drag.moved) changed();
+        else undoStack.pop();   // só um clique: nada mudou
+      } else if (drag.kind === 'pan') saveToLocalMemory();
+      drag = null;
+      return;
+    }
+    if (!draft) return;
+    if (draft.kind === 'line') {
+      commitTrecho('line', [draft.a, draft.b]);
+      draft = null;
+    } else if (draft.kind === 'curve' && draft.phase === 'span') {
+      if (dist(draft.a, draft.b) * view().zoom < 4) { draft = null; requestDraw(); return; }
+      draft.phase = 'bend';
+      draft.c = mid(draft.a, draft.b);
+    } else if (draft.kind === 'pencil') {
+      const end = snapPoint(m);
+      draft.pts.push(end);
+      const pts = simplify(draft.pts, 5 / view().zoom);
+      draft = null;
+      if (pts.length >= 2) commitTrecho(pts.length === 2 ? 'line' : 'path', pts);
+    }
+    hoverSnap = null;
+    requestDraw();
+  }
+
+  /* ── Painel do selecionado e listas ───────────────────────────────────── */
+
+  function field(labelText, input) {
+    const row = document.createElement('label');
+    row.className = 'agv-field';
+    const span = document.createElement('span');
+    span.textContent = labelText;
+    row.append(span, input);
+    return row;
+  }
+
+  function numberInput(value, step, onCommit, opts = {}) {
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.className = 'eng-input';
+    inp.step = String(step);
+    if (opts.placeholder) inp.placeholder = opts.placeholder;
+    inp.value = value === null || value === undefined ? '' : String(value);
+    inp.addEventListener('change', () => onCommit(inp.value.trim() === '' ? null : parseFloat(inp.value)));
+    return inp;
+  }
+
+  function selectInput(options, value, onCommit) {
+    const s = document.createElement('select');
+    s.className = 'eng-input';
+    options.forEach(([v, t]) => { const o = document.createElement('option'); o.value = String(v); o.textContent = t; s.appendChild(o); });
+    s.value = String(value);
+    s.addEventListener('change', () => onCommit(s.value));
+    return s;
+  }
+
+  const edit = fn => { pushUndo(); fn(); changed(); };
+
+  /** Painel flutuante: configura o trecho ou o AGV selecionado. */
+  function renderPanel() {
+    const panel = $('agvPanel');
+    panel.replaceChildren();
+    const item = sel && (sel.kind === 'agv' ? agv(sel.id) : trecho(sel.id));
+    if (!item) { panel.hidden = true; return; }
+    panel.hidden = false;
+    const title = document.createElement('div');
+    title.className = 'agv-panel-title';
+    const close = document.createElement('button');
+    close.className = 'eng-chip';
+    close.textContent = '✕';
+    close.title = 'Fechar';
+    close.addEventListener('click', () => { sel = null; renderPanel(); requestDraw(); });
+
+    if (sel.kind === 'trecho') {
+      const tl = ac().trilhos.find(t => t.trechos.includes(item.id));
+      const kindName = { line: 'Linha', curve: 'Curva', path: 'Traço (lápis)' }[item.kind];
+      title.textContent = `${kindName} · ${tl ? tl.name : 'sem trilho'}`;
+      title.appendChild(close);
+      panel.appendChild(title);
+      const info = document.createElement('div');
+      info.className = 'agv-panel-info';
+      info.textContent = `Comprimento desenhado: ${fmt(trechoGeoLen(item), 2)} m (pela grade)`;
+      panel.append(info,
+        field('Representa (m)', numberInput(Number.isFinite(item.realLen) ? item.realLen : null, 0.1, v => edit(() => {
+          const places = capturePlaces();
+          item.realLen = v !== null && v > 0 ? v : null;
+          restorePlaces(places);
+        }), { placeholder: fmt(trechoGeoLen(item), 2) })));
+      const del = document.createElement('button');
+      del.className = 'btn btn-delete';
+      del.textContent = '✕ Excluir trecho';
+      del.addEventListener('click', () => deleteTrecho(item.id));
+      panel.appendChild(del);
+      return;
+    }
+
+    title.textContent = `▭ ${item.name}`;
+    title.appendChild(close);
+    panel.appendChild(title);
+    const name = document.createElement('input');
+    name.className = 'eng-input';
+    name.value = item.name;
+    name.addEventListener('change', () => edit(() => { item.name = name.value.trim() || item.name; }));
+    const trilhos = [['', '— solto (não anda) —'], ...ac().trilhos.map(t => [t.id, t.name])];
+    const dirOptions = item.orient === 'long'
+      ? [[1, 'Para a frente ▶'], [-1, '◀ De ré']]
+      : [[1, 'Para a direita dele ▶'], [-1, '◀ Para a esquerda dele']];
+    panel.append(
+      field('Nome', name),
+      field('Trilho', selectInput(trilhos, item.trilhoId ?? '', v => edit(() => {
+        const p = poseAt(item, 0);
+        const tl = trilho(Number(v));
+        if (!tl) { Object.assign(item, { trilhoId: null, x: p.x, y: p.y, angle: p.ang }); return; }
+        const gm = trilhoGeom(tl);
+        item.trilhoId = tl.id;
+        item.s0 = geoToReal(gm, nearestOnTrilho(gm, p.x, p.y).g);
+      }))),
+      field('Velocidade (m/min)', numberInput(item.speed, 1, v => edit(() => { item.speed = Math.max(0, v || 0); }))),
+      field('Sentido', selectInput(dirOptions, item.dir, v => edit(() => { item.dir = Number(v) < 0 ? -1 : 1; }))),
+      field('Posição inicial (m)', numberInput(Math.round(item.s0 * 100) / 100, 0.1, v => edit(() => { item.s0 = Math.max(0, v || 0); }))),
+      field('Partida (s)', numberInput(item.delay || 0, 1, v => edit(() => { item.delay = Math.max(0, v || 0); }))),
+      field('No fim do trilho', selectInput(Object.entries(END_MODES), item.endMode, v => edit(() => { item.endMode = END_MODES[v] ? v : 'stop'; }))),
+      field('Posição no trilho', selectInput([['trans', 'Atravessado (anda de lado)'], ['long', 'Comprido no sentido do trilho']], item.orient, v => edit(() => { item.orient = v === 'long' ? 'long' : 'trans'; })))
+    );
+    const tl = trilho(item.trilhoId);
+    const info = document.createElement('div');
+    info.className = 'agv-panel-info';
+    info.textContent = tl
+      ? `${tl.closed ? 'Circuito fechado' : 'Trilho aberto'} · ${fmt(trilhoGeom(tl).realLen, 1)} m · ${AGV_SHORT.toFixed(2)} × ${AGV_LONG.toFixed(2)} m`
+      : 'Arraste o AGV (ou escolha um trilho) para ele andar sobre o caminho';
+    const del = document.createElement('button');
+    del.className = 'btn btn-delete';
+    del.textContent = '✕ Excluir AGV';
+    del.addEventListener('click', () => deleteAgv(item.id));
+    panel.append(info, del);
+  }
+
+  function cellRow(tbody, cells, onClick) {
+    const tr = document.createElement('tr');
+    cells.forEach(c => { const td = document.createElement('td'); if (c instanceof Node) td.appendChild(c); else td.textContent = c; tr.appendChild(td); });
+    if (onClick) { tr.className = 'clickable'; tr.addEventListener('click', e => { if (!e.target.closest('input, select, button')) onClick(); }); }
+    tbody.appendChild(tr);
+  }
+
+  const emptyRow = (tbody, cols, text) => {
+    tbody.innerHTML = `<tr><td colspan="${cols}" class="text-muted"></td></tr>`;
+    tbody.querySelector('td').textContent = text;
+  };
+
+  function renderLists() {
+    const tb = $('agvTrilhoBody');
+    tb.innerHTML = '';
+    if (!ac().trilhos.length) emptyRow(tb, 7, 'Nenhum trilho. Use Linha, Curva ou Lápis para desenhar.');
+    ac().trilhos.forEach(tl => {
+      const color = document.createElement('input');
+      color.type = 'color';
+      color.className = 'agv-color';
+      color.value = tl.color;
+      color.title = 'Cor do trilho (os AGVs dele usam a mesma cor)';
+      color.addEventListener('change', () => edit(() => { tl.color = color.value; }));
+      const name = document.createElement('input');
+      name.className = 'eng-input eng-name';
+      name.value = tl.name;
+      name.addEventListener('change', () => edit(() => { tl.name = name.value.trim() || tl.name; }));
+      const gm = trilhoGeom(tl);
+      const nAgv = ac().agvs.filter(a => a.trilhoId === tl.id).length;
+      const del = document.createElement('button');
+      del.className = 'btn btn-delete';
+      del.textContent = '✕';
+      del.title = 'Excluir o trilho inteiro (os AGVs dele ficam soltos)';
+      del.addEventListener('click', () => deleteTrilho(tl.id));
+      cellRow(tb, [color, name, String(tl.trechos.length), `${fmt(gm.realLen, 1)} m`, tl.closed ? 'Circuito' : 'Aberto', String(nAgv), del],
+        () => { sel = { kind: 'trecho', id: tl.trechos[0] }; renderPanel(); requestDraw(); });
+    });
+
+    const ab = $('agvAgvBody');
+    ab.innerHTML = '';
+    if (!ac().agvs.length) emptyRow(ab, 6, 'Nenhum AGV. Use a ferramenta ▭ AGV e clique sobre um trilho.');
+    ac().agvs.forEach(a => {
+      const tl = trilho(a.trilhoId);
+      const dot = document.createElement('span');
+      dot.className = 'agv-dot';
+      dot.style.background = tl ? tl.color : '#64748b';
+      const dirTxt = a.orient === 'long' ? (a.dir > 0 ? 'Frente ▶' : '◀ Ré') : (a.dir > 0 ? 'Direita ▶' : '◀ Esquerda');
+      cellRow(ab, [dot, a.name, tl ? tl.name : 'solto', `${fmt(a.speed, 1)} m/min`, dirTxt, END_MODES[a.endMode]],
+        () => { sel = { kind: 'agv', id: a.id }; renderPanel(); requestDraw(); });
+    });
+  }
+
+  function renderCollisions() {
+    const tb = $('agvCollisionBody');
+    tb.innerHTML = '';
+    const dur = Math.max(1, Number(ac().duration) || 300);
+    const badge = $('agvCollisionBadge');
+    badge.textContent = collisions.length ? `⚠ ${collisions.length} colisão(ões) em ${dur} s` : `✓ Sem colisões em ${dur} s`;
+    badge.classList.toggle('badge-red', collisions.length > 0);
+    badge.classList.toggle('badge-saved', !collisions.length);
+    if (!collisions.length) { emptyRow(tb, 5, ac().agvs.length > 1 ? 'Nenhuma colisão no horizonte analisado.' : 'Coloque pelo menos dois AGVs para analisar colisões.'); return; }
+    collisions.forEach(c => {
+      const A = agv(c.a), B = agv(c.b);
+      cellRow(tb, [`${A ? A.name : '?'} × ${B ? B.name : '?'}`, `${fmt(c.t0, 1)} s`, `${fmt(c.t1 - c.t0 + SIM_DT, 1)} s`, `x ${fmt(c.x, 1)} m · y ${fmt(c.y, 1)} m`, '▶ ver'],
+        () => {
+          setPlaying(false);
+          setTime(c.t0);
+          view().cx = c.x;
+          view().cy = c.y;
+          view().zoom = Math.max(view().zoom, 25);
+          requestDraw();
+        });
+    });
+  }
+
+  function render() {
+    $('agvDuration').value = String(ac().duration);
+    $('agvScrubber').max = String(ac().duration);
+    setTool(tool);
+    renderLists();
+    renderPanel();
+    invalidate();
+    requestDraw();
+  }
+
+  /* ── Inicialização ────────────────────────────────────────────────────── */
+
+  function init() {
+    canvas = $('agvCanvas');
+    ctx = canvas.getContext('2d');
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', () => { drag = null; draft = null; requestDraw(); });
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      const [px, py] = pointer(e);
+      zoomAt(Math.exp(-e.deltaY * 0.0015), px, py);
+    }, { passive: false });
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+    $('agvScrubber').addEventListener('input', e => { setPlaying(false); setTime(parseFloat(e.target.value)); });
+    $('agvDuration').addEventListener('change', e => {
+      const v = Math.min(7200, Math.max(10, parseFloat(e.target.value) || 300));
+      ac().duration = v;
+      e.target.value = String(v);
+      $('agvScrubber').max = String(v);
+      scheduleAnalysis();
+      saveToLocalMemory();
+    });
+    document.addEventListener('keydown', e => {
+      if (ui.view !== 'agv' || e.target.closest('input, select, textarea')) return;
+      if (e.key === 'Escape') { draft = null; sel = null; renderPanel(); requestDraw(); }
+      else if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); e.preventDefault(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { undo(); e.preventDefault(); }
+    });
+    render();
+  }
+
+  return {
+    init,
+    render,
+    draw: requestDraw,
+    setTool,
+    undo,
+    fit,
+    zoomIn: () => zoomAt(1.25),
+    zoomOut: () => zoomAt(0.8),
+    togglePlay: () => setPlaying(!playing),
+    restart: () => setTime(0),
+    stop: () => setPlaying(false)
+  };
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 12. PERSISTÊNCIA (memória do PC, exportar / importar, migração de formatos antigos)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 function serializeConfig() {
@@ -4461,6 +5633,46 @@ function mergeConfig(target, cfg) {
       te.sheet = { fileName: String(ec.sheet.fileName ?? ''), importedAt: String(ec.sheet.importedAt ?? ''), passes };
     }
   }
+  if (cfg.agvCfg && typeof cfg.agvCfg === 'object') mergeAgvConfig(target.agvCfg, cfg.agvCfg);
+}
+
+/** Fluxo de AGVs: aceita só o que tiver formato válido (números finitos, referências existentes). */
+function mergeAgvConfig(t, c) {
+  const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+  const pt = p => Array.isArray(p) && p.length >= 2 && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]));
+  if (Array.isArray(c.trechos)) {
+    t.trechos = c.trechos
+      .filter(tr => tr && ['line', 'curve', 'path'].includes(tr.kind) && Array.isArray(tr.pts) && tr.pts.length >= 2 && tr.pts.every(pt))
+      .map(tr => ({ id: num(tr.id, 0), kind: tr.kind, pts: tr.pts.map(p => [Number(p[0]), Number(p[1])]), realLen: Number(tr.realLen) > 0 ? Number(tr.realLen) : null }));
+  }
+  const trechoIds = new Set(t.trechos.map(tr => tr.id));
+  if (Array.isArray(c.trilhos)) {
+    t.trilhos = c.trilhos
+      .filter(tl => tl && Array.isArray(tl.trechos))
+      .map(tl => ({ id: num(tl.id, 0), name: String(tl.name ?? 'Trilho'), color: /^#[0-9a-f]{6}$/i.test(tl.color) ? tl.color : '#38bdf8', trechos: tl.trechos.map(Number).filter(id => trechoIds.has(id)), closed: !!tl.closed }))
+      .filter(tl => tl.trechos.length);
+  }
+  const trilhoIds = new Set(t.trilhos.map(tl => tl.id));
+  if (Array.isArray(c.agvs)) {
+    t.agvs = c.agvs.filter(a => a && typeof a === 'object').map(a => ({
+      id: num(a.id, 0),
+      name: String(a.name ?? 'AGV'),
+      trilhoId: trilhoIds.has(Number(a.trilhoId)) ? Number(a.trilhoId) : null,
+      s0: Math.max(0, num(a.s0, 0)),
+      speed: Math.max(0, num(a.speed, 30)),
+      dir: Number(a.dir) < 0 ? -1 : 1,
+      endMode: ['stop', 'pingpong', 'loop'].includes(a.endMode) ? a.endMode : 'stop',
+      delay: Math.max(0, num(a.delay, 0)),
+      orient: a.orient === 'long' ? 'long' : 'trans',
+      x: num(a.x, 0), y: num(a.y, 0), angle: num(a.angle, 0)
+    }));
+  }
+  if (c.view && typeof c.view === 'object') {
+    t.view = { cx: num(c.view.cx, 0), cy: num(c.view.cy, 0), zoom: Math.min(300, Math.max(0.3, num(c.view.zoom, 6))) };
+  }
+  if (Number.isFinite(Number(c.duration))) t.duration = Math.min(7200, Math.max(10, Number(c.duration)));
+  const maxId = Math.max(0, ...t.trechos.map(o => o.id), ...t.trilhos.map(o => o.id), ...t.agvs.map(o => o.id));
+  t.nextId = Math.max(num(c.nextId, 1), maxId + 1);
 }
 
 /** Aplica uma configuração e reconstrói a interface. @returns {boolean} aplicada */
@@ -4471,6 +5683,7 @@ function applyConfig(cfg, showFeedback = false) {
   buildParamControls();
   recompute(true);
   Engagement.render();
+  AgvFlow.render();
   if (showFeedback) showMemToast('✓ Parâmetros Importados');
   return true;
 }
@@ -4521,7 +5734,7 @@ function resetDefaultParams() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * 12. AÇÕES, PROTEÇÃO E INICIALIZAÇÃO
+ * 13. AÇÕES, PROTEÇÃO E INICIALIZAÇÃO
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 function setSeqMode(m) {
@@ -4732,6 +5945,13 @@ const ACTIONS = {
   engAddPosto: () => Engagement.addPosto(),
   engImportSheet: () => $('engSheetInput').click(),
   engAddAllFops: () => Engagement.addAllFops(),
+  agvTool: tool => AgvFlow.setTool(tool),
+  agvUndo: () => AgvFlow.undo(),
+  agvZoomIn: () => AgvFlow.zoomIn(),
+  agvZoomOut: () => AgvFlow.zoomOut(),
+  agvFit: () => AgvFlow.fit(),
+  agvPlay: () => AgvFlow.togglePlay(),
+  agvRestart: () => AgvFlow.restart(),
   engClearSheet: () => Engagement.clearSheet()
 };
 
@@ -4806,8 +6026,10 @@ function boot() {
     Renderer.remeasure();
     refreshAutoFields();
     if (ui.view === 'engajamento') Engagement.draw();
+    if (ui.view === 'agv') AgvFlow.draw();
   });
   Engagement.init();
+  AgvFlow.init();
   bindViewControls();
   bindCanvasResizer();
   buildParamControls();
