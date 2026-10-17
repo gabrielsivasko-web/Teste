@@ -171,6 +171,8 @@
   .agv-field .eng-input { width: 150px; }
   .agv-color { width: 34px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
   .agv-dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+  .agv-checklist { display: flex; flex-direction: column; gap: 3px; max-height: 150px; overflow-y: auto; padding: 4px 6px; border: 1px solid var(--border); border-radius: 8px; }
+  .agv-checklist label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); font-family: monospace; font-size: 11px; }
   .agv-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin-top: 10px; }
   .eng-input { background: #0f131c; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: monospace; font-size: 11px; padding: 4px 6px; width: 90px; outline: none; }
   .eng-input:focus { border-color: var(--accent-light); }
@@ -764,7 +766,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Cor</th><th>Nome</th><th>Trechos</th><th>Comprimento</th><th>Tipo</th><th>AGVs</th><th></th></tr></thead>
+          <thead><tr><th>Cor</th><th>Nome</th><th>Trechos</th><th>Comprimento</th><th>Tipo</th><th>AGVs</th><th>Cruza / divide com</th><th></th></tr></thead>
           <tbody id="agvTrilhoBody"></tbody>
         </table>
       </div>
@@ -773,7 +775,7 @@
       <div class="section-label">▭ AGVs (clique para configurar)</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th></th><th>AGV</th><th>Trilho</th><th>Velocidade</th><th>Sentido</th><th>No fim</th></tr></thead>
+          <thead><tr><th></th><th>AGV</th><th>Trilho</th><th>Velocidade</th><th>Sentido</th><th>Prioridade</th><th>No fim</th></tr></thead>
           <tbody id="agvAgvBody"></tbody>
         </table>
       </div>
@@ -784,6 +786,13 @@
     <table>
       <thead><tr><th>AGVs</th><th>Início</th><th>Duração</th><th>Local</th><th></th></tr></thead>
       <tbody id="agvCollisionBody"></tbody>
+    </table>
+  </div>
+  <div class="section-label text-amber mt-10">⏸ Paradas e esperas por AGV no horizonte (sensor de 1 m à frente e prioridade)</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>AGV</th><th>Paradas pelo sensor</th><th>Tempo parado (sensor)</th><th>Esperas por prioridade</th><th>Tempo esperando (prioridade)</th><th>No fim do horizonte</th></tr></thead>
+      <tbody id="agvWaitBody"></tbody>
     </table>
   </div>
 </div>
@@ -4647,6 +4656,17 @@ const AgvModel = (() => {
     return { pts, cum, segs, len, closed: r.closed && pts.length > 2, start: r.start, end: r.end };
   }
 
+  /** Ponto do trilho a g metros do início. */
+  function pointAt(gm, g) {
+    const { pts, cum } = gm;
+    if (pts.length < 2) return pts[0] ? [pts[0][0], pts[0][1]] : [0, 0];
+    g = Math.min(gm.len, Math.max(0, g));
+    let lo = 0, hi = cum.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= g) lo = mid; else hi = mid; }
+    const f = (g - cum[lo]) / (cum[hi] - cum[lo] || 1);
+    return [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * f, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * f];
+  }
+
   function nextColor(m) {
     const used = new Set(m.trilhos.map(t => t.color));
     return PALETTE.find(c => !used.has(c)) || PALETTE[m.trilhos.length % PALETTE.length];
@@ -4879,19 +4899,53 @@ const AgvModel = (() => {
     return m.trechos.filter(t => !tl.trechos.includes(t.id) && [r.start, r.end].some(n => t.a === n || t.b === n)).map(t => t.id);
   }
 
-  /** Montagem do caminho: acrescenta o trecho numa ponta do trilho ou tira o da ponta. @returns {string|null} motivo da recusa */
-  function toggleRouteTrecho(m, tl, trId) {
-    const ids = tl.trechos, tr = byId(m.trechos, trId);
-    if (!tr) return null;
-    if (!ids.length) { ids.push(trId); return null; }
-    if (ids[ids.length - 1] === trId) { ids.pop(); return null; }
-    if (ids[0] === trId) { ids.shift(); return null; }
-    if (ids.includes(trId)) return 'Só dá para tirar trechos das pontas do caminho';
+  /** Caminho mais curto (ids de trechos) do nó `from` até um dos nós `targets`, sem usar os trechos `banned`. */
+  function shortestPath(m, from, targets, banned) {
+    const distTo = new Map([[from, 0]]), prev = new Map(), done = new Set();
+    let found = null;
+    while (found === null) {
+      let u = null;
+      distTo.forEach((d, id) => { if (!done.has(id) && (u === null || d < distTo.get(u))) u = id; });
+      if (u === null) return null;
+      if (targets.has(u)) { found = u; break; }
+      done.add(u);
+      m.trechos.forEach(t => {
+        if (banned.has(t.id) || (t.a !== u && t.b !== u)) return;
+        const v = t.a === u ? t.b : t.a, d = distTo.get(u) + trechoLen(t);
+        if (!distTo.has(v) || d < distTo.get(v)) { distTo.set(v, d); prev.set(v, [u, t.id]); }
+      });
+    }
+    const path = [];
+    let v = found;
+    while (prev.has(v)) { const [u, id] = prev.get(v); path.unshift(id); v = u; }
+    return path;
+  }
+
+  /**
+   * Faz o caminho do trilho chegar até o trecho: continua pelo fim do trilho (ou, se não houver ligação, volta pelo
+   * começo) pelo trajeto mais curto da rede. @returns {string|null} motivo da recusa
+   */
+  function extendRouteTo(m, tl, trId) {
+    const tr = byId(m.trechos, trId);
+    if (!tr || tl.trechos.includes(trId)) return null;
+    if (!tl.trechos.length) { tl.trechos.push(trId); return null; }
     const r = route(m, tl);
     if (r.closed) return 'O caminho já é um circuito fechado — tire um trecho da ponta para mudar';
-    if (tr.a === r.end || tr.b === r.end) { ids.push(trId); return null; }
-    if (tr.a === r.start || tr.b === r.start) { ids.unshift(trId); return null; }
-    return 'Esse trecho não encosta nas pontas do caminho';
+    const banned = new Set([...tl.trechos, trId]), ends = new Set([tr.a, tr.b]);
+    const fwd = shortestPath(m, r.end, ends, banned);
+    if (fwd) { tl.trechos.push(...fwd, trId); return null; }
+    const back = shortestPath(m, r.start, ends, banned);
+    if (back) { tl.trechos.unshift(trId, ...back.reverse()); return null; }
+    return 'Esse trecho não tem ligação com o caminho do trilho';
+  }
+
+  /** Montagem do caminho: tira o trecho da ponta do trilho ou leva o caminho até ele. @returns {string|null} motivo da recusa */
+  function toggleRouteTrecho(m, tl, trId) {
+    const ids = tl.trechos;
+    if (ids.length && ids[ids.length - 1] === trId) { ids.pop(); return null; }
+    if (ids.length && ids[0] === trId) { ids.shift(); return null; }
+    if (ids.includes(trId)) return 'Só dá para tirar trechos das pontas do caminho';
+    return extendRouteTo(m, tl, trId);
   }
 
   /** Completa uma rede carregada: nós das pontas (arquivos antigos não tinham), comprimentos antigos e trilhos. */
@@ -4915,20 +4969,379 @@ const AgvModel = (() => {
 
   return {
     PALETTE, dist, polyLen, midPoint, simplify, samples, trechoLen, lenMismatch, nearestOnPoly, degree, component, nearestNode, nearestTrecho,
-    route, trilhoGeom, newTrilho, commitStroke, splitAt, setLength, moveNodes, mergeNodes, deleteTrecho, deleteTrilho,
+    route, trilhoGeom, pointAt, newTrilho, extendRouteTo, commitStroke, splitAt, setLength, moveNodes, mergeNodes, deleteTrecho, deleteTrilho,
     routeCandidates, toggleRouteTrecho, repair
   };
 })();
 
+/**
+ * Tráfego dos AGVs (sem DOM): simulação passo a passo (0,1 s) com as regras de movimento.
+ *  - Sensor de proximidade (todos): o AGV enxerga 1 m à frente, na largura dele; havendo outro AGV ali, para e espera.
+ *  - Prioridade (só os marcados): nos cruzamentos e trechos em comum com o trilho de um AGV com prioridade, o AGV sem
+ *    prioridade espera antes de entrar na zona enquanto o prioritário estiver nela ou chegando a tempo de encontrá-lo.
+ * Estado por AGV: d (posição no trilho, m), s (sentido em que anda: +1/−1), done (parou no fim), wait (0 andando,
+ * 1 sensor, 2 prioridade), by (quem causou a espera).
+ */
+const AgvTraffic = (() => {
+  const AGV_LONG = 1.5, AGV_SHORT = 0.8, HALF = AGV_LONG / 2;
+  const SENSOR_M = 1;                                  // alcance do sensor à frente (m)
+  const STEP_S = 0.1;                                  // passo da simulação (s)
+  const REACH = Math.hypot(AGV_LONG, AGV_SHORT);       // centros mais perto que isto podem se encostar
+  const NEAR = HALF + SENSOR_M + REACH / 2 + 0.05;     // além disto um AGV não aparece no sensor do outro
+  const YIELD_MARGIN = 2;                              // folga (s) para o AGV sem prioridade liberar a zona
+  const CHECKPOINT = 600;                              // passos entre fotografias do estado (60 s)
+  const ZONE_STEP = 0.25;                              // amostragem das zonas de conflito (m)
+  const MAX_EVENTS = 1000;                             // o relatório para de listar colisões depois disto
+  const RESUME_S = 2;                                  // voltar a parar antes disto (s) é a mesma parada
+  const mod = (v, L) => ((v % L) + L) % L;
+  const { pointAt } = AgvModel;
+
+  /** Direção do trilho no ponto d (corda de meio AGV para cada lado — corpo rígido com o eixo no meio). */
+  function headingAt(gm, d, p) {
+    const wrap = v => (gm.closed ? mod(v, gm.len) : v);
+    const f = pointAt(gm, wrap(d + HALF)), r = pointAt(gm, wrap(d - HALF));
+    const ux = f[0] - r[0], uy = f[1] - r[1], l = Math.hypot(ux, uy);
+    if (l > 1e-9) { p.ux = ux / l; p.uy = uy / l; }
+    p.dirty = false;
+  }
+
+  /** Pose com o centro na posição d do trilho; (ux, uy) = direção do trilho. */
+  function poseOn(gm, d) {
+    const [x, y] = pointAt(gm, d);
+    const p = { x, y, d, ux: 1, uy: 0, hu: HALF, hv: AGV_SHORT / 2, dirty: true };
+    headingAt(gm, d, p);
+    return p;
+  }
+
+  /** A direção só é calculada quando alguém precisa dela (sensor, contato, desenho): o centro basta no resto. */
+  function ensureHeading(W, st, i) {
+    const p = st.poses[i];
+    if (p.dirty) headingAt(W.units[i].gm, p.d, p);
+  }
+
+  /** Sobreposição de dois retângulos girados { x, y, ux, uy, hu, hv } (eixos separadores). */
+  function overlap(A, B) {
+    const axes = [[A.ux, A.uy], [-A.uy, A.ux], [B.ux, B.uy], [-B.uy, B.ux]];
+    const dx = B.x - A.x, dy = B.y - A.y;
+    return axes.every(([ax, ay]) => {
+      const rA = A.hu * Math.abs(A.ux * ax + A.uy * ay) + A.hv * Math.abs(-A.uy * ax + A.ux * ay);
+      const rB = B.hu * Math.abs(B.ux * ax + B.uy * ay) + B.hv * Math.abs(-B.uy * ax + B.ux * ay);
+      return Math.abs(dx * ax + dy * ay) <= rA + rB;
+    });
+  }
+
+  /** Faixa vista pelo sensor: 1 m logo à frente do AGV (s = sentido em que anda), na largura dele. */
+  const sensorBox = (p, s) => ({
+    x: p.x + s * p.ux * (HALF + SENSOR_M / 2), y: p.y + s * p.uy * (HALF + SENSOR_M / 2), ux: p.ux, uy: p.uy, hu: SENSOR_M / 2, hv: AGV_SHORT / 2
+  });
+
+  /**
+   * Zonas de conflito entre os trilhos A e B: intervalos de A em que o centro do AGV fica a menos de REACH do
+   * trilho B (cruzamentos, trechos em comum, ligações), com o intervalo correspondente em B.
+   * @returns {{ a: [number, number], b: [number, number] }[]}
+   */
+  function conflictZones(ga, gb) {
+    if (ga.pts.length < 2 || gb.pts.length < 2) return [];
+    const cell = 2 * REACH, grid = new Map();
+    const cellKey = (cx, cy) => `${cx},${cy}`;
+    for (let i = 1; i < gb.pts.length; i++) {
+      const [ax, ay] = gb.pts[i - 1], [bx, by] = gb.pts[i];
+      const x0 = Math.floor((Math.min(ax, bx) - REACH) / cell), x1 = Math.floor((Math.max(ax, bx) + REACH) / cell);
+      const y0 = Math.floor((Math.min(ay, by) - REACH) / cell), y1 = Math.floor((Math.max(ay, by) + REACH) / cell);
+      for (let cx = x0; cx <= x1; cx++) {
+        for (let cy = y0; cy <= y1; cy++) {
+          const k = cellKey(cx, cy);
+          if (!grid.has(k)) grid.set(k, []);
+          grid.get(k).push(i);
+        }
+      }
+    }
+    const marks = [];
+    for (let g = 0; g <= ga.len + 1e-9; g += ZONE_STEP) {
+      const [x, y] = pointAt(ga, Math.min(g, ga.len));
+      const segs = grid.get(cellKey(Math.floor(x / cell), Math.floor(y / cell)));
+      if (!segs) continue;
+      let best = null;
+      segs.forEach(i => {
+        const [ax, ay] = gb.pts[i - 1], [bx, by] = gb.pts[i];
+        const dx = bx - ax, dy = by - ay, l = Math.hypot(dx, dy);
+        const f = Math.min(1, Math.max(0, ((x - ax) * dx + (y - ay) * dy) / (l * l || 1)));
+        const d = Math.hypot(x - ax - dx * f, y - ay - dy * f);
+        if (!best || d < best.d) best = { d, g: gb.cum[i - 1] + l * f };
+      });
+      if (best && best.d < REACH) marks.push([g, best.g]);
+    }
+    const zones = [];
+    marks.forEach(([g, gB]) => {
+      const z = zones[zones.length - 1];
+      if (z && g - z.a[1] <= ZONE_STEP * 1.5) { z.a[1] = g; z.b[0] = Math.min(z.b[0], gB); z.b[1] = Math.max(z.b[1], gB); }
+      else zones.push({ a: [g, g], b: [gB, gB] });
+    });
+    return zones.map(z => ({
+      a: [Math.max(0, z.a[0] - ZONE_STEP), Math.min(ga.len, z.a[1] + ZONE_STEP)],
+      b: [Math.max(0, z.b[0] - REACH), Math.min(gb.len, z.b[1] + REACH)]
+    }));
+  }
+
+  /**
+   * Mundo da simulação: um "unit" por AGV (na ordem de config.agvCfg.agvs). AGV sem trilho é um obstáculo parado.
+   * @param geomOf   trilho → geometria
+   * @param zonesFor (idTrilhoA, idTrilhoB) → zonas de conflito (com cache)
+   */
+  function createWorld(m, geomOf, zonesFor) {
+    const units = m.agvs.map(a => {
+      const tl = a.trilhoId != null ? m.trilhos.find(t => t.id === a.trilhoId) : null;
+      const gm = tl ? geomOf(tl) : null;
+      const ok = !!(gm && gm.pts.length >= 2 && gm.len > 0);
+      const ang = a.angle || 0;
+      return {
+        id: a.id, a, tlId: ok ? tl.id : null, gm: ok ? gm : null,
+        v: Math.max(0, Number(a.speed) || 0) / 60, delay: Math.max(0, a.delay || 0), prio: !!a.priority, end: a.endMode,
+        fixed: ok ? null : { x: a.x || 0, y: a.y || 0, ux: Math.cos(ang), uy: Math.sin(ang), hu: HALF, hv: AGV_SHORT / 2 }
+      };
+    });
+    const maxDelay = Math.max(0, ...units.filter(u => u.gm).map(u => u.delay));
+    return { units, zonesFor, yields: null, maxDelay };
+  }
+
+  /** Para cada AGV sem prioridade: as zonas em que ele cede a passagem a um AGV com prioridade de outro trilho. */
+  function buildYields(W) {
+    W.yields = W.units.map((u, i) => {
+      if (!u.gm || u.prio) return [];
+      const out = [];
+      W.units.forEach((o, j) => {
+        if (j === i || !o.gm || !o.prio || o.tlId === u.tlId) return;
+        W.zonesFor(u.tlId, o.tlId).forEach(z => out.push({ j, za: z.a, zb: z.b }));
+      });
+      return out;
+    });
+  }
+
+  function initState(W) {
+    const n = W.units.length;
+    const st = {
+      k: 0, d: new Float64Array(n), s: new Int8Array(n), done: new Uint8Array(n), wait: new Uint8Array(n),
+      by: new Int32Array(n).fill(-1), want: new Uint8Array(n), poses: new Array(n), hits: []
+    };
+    W.units.forEach((u, i) => {
+      if (!u.gm) { st.poses[i] = u.fixed; st.done[i] = 1; return; }
+      const L = u.gm.len;
+      st.d[i] = u.gm.closed ? mod(u.a.s0, L) : Math.min(L, Math.max(0, u.a.s0));
+      st.s[i] = u.a.dir < 0 ? -1 : 1;
+      st.poses[i] = poseOn(u.gm, st.d[i]);
+    });
+    return st;
+  }
+
+  const snapshot = st => ({ k: st.k, d: st.d.slice(), s: st.s.slice(), done: st.done.slice() });
+
+  function restore(W, snap) {
+    const st = initState(W);
+    st.k = snap.k;
+    st.d.set(snap.d);
+    st.s.set(snap.s);
+    st.done.set(snap.done);
+    W.units.forEach((u, i) => { if (u.gm) st.poses[i] = poseOn(u.gm, st.d[i]); });
+    return st;
+  }
+
+  /** Onde a zona [z0, z1] está em relação ao centro do AGV que anda no sentido s: dentro, ou a que distância à frente. */
+  function zoneAhead(u, d, s, z) {
+    if (d >= z[0] && d <= z[1]) return { inside: true, dist: 0 };
+    const L = u.gm.len;
+    if (u.gm.closed) return { inside: false, dist: s > 0 ? mod(z[0] - d, L) : mod(d - z[1], L) };
+    if (s > 0) return { inside: false, dist: z[0] >= d ? z[0] - d : Infinity };
+    return { inside: false, dist: z[1] <= d ? d - z[1] : Infinity };
+  }
+
+  /** O AGV i (sem prioridade), prestes a entrar na zona, deve esperar o prioritário j? */
+  function mustYield(W, st, i, y, ahead, t) {
+    const u = W.units[i], o = W.units[y.j];
+    const zj = zoneAhead(o, st.d[y.j], st.s[y.j], y.zb);
+    if (zj.inside) return true;                          // o prioritário está na zona (andando ou parado)
+    if (st.done[y.j] || o.v <= 0) return false;
+    const eta = zj.dist / o.v + Math.max(0, o.delay - t);
+    const clear = (ahead.dist + (y.za[1] - y.za[0])) / u.v;
+    return eta <= clear + YIELD_MARGIN;                  // chegaria antes de o AGV sem prioridade sair da zona
+  }
+
+  function advance(u, st, i) {
+    const L = u.gm.len;
+    let d = st.d[i] + st.s[i] * u.v * STEP_S;
+    if (u.gm.closed) d = mod(d, L);
+    else if (d > L || d < 0) {
+      if (u.end === 'pingpong') { d = d > L ? 2 * L - d : -d; st.s[i] = -st.s[i]; }
+      else if (u.end === 'loop') d = d > L ? d - L : d + L;
+      else { d = Math.min(L, Math.max(0, d)); st.done[i] = 1; }
+    }
+    st.d[i] = d;
+    const p = st.poses[i], [x, y] = pointAt(u.gm, d);
+    p.x = x;
+    p.y = y;
+    p.d = d;
+    p.dirty = true;
+  }
+
+  /**
+   * Um passo: decide quem anda (sensor e prioridade, com as posições do instante atual), registra os contatos e,
+   * com apply, move os AGVs. @returns {number} quantos AGVs andaram
+   */
+  function step(W, st, apply = true) {
+    if (!W.yields) buildYields(W);
+    const n = W.units.length, t = st.k * STEP_S;
+    const { want, wait, by, poses, hits } = st;
+    hits.length = 0;
+    for (let i = 0; i < n; i++) {
+      const u = W.units[i];
+      want[i] = u.gm && !st.done[i] && u.v > 0 && t >= u.delay ? 1 : 0;
+      wait[i] = 0;
+      by[i] = -1;
+    }
+    for (let i = 0; i < n; i++) {
+      const A = poses[i];
+      for (let j = i + 1; j < n; j++) {
+        const B = poses[j], dx = B.x - A.x, dy = B.y - A.y, d2 = dx * dx + dy * dy;
+        if (d2 > NEAR * NEAR) continue;
+        ensureHeading(W, st, i);
+        ensureHeading(W, st, j);
+        if (want[i] && !wait[i] && overlap(sensorBox(A, st.s[i]), B)) { wait[i] = 1; by[i] = j; }
+        if (want[j] && !wait[j] && overlap(sensorBox(B, st.s[j]), A)) { wait[j] = 1; by[j] = i; }
+        if (d2 <= REACH * REACH && overlap(A, B)) hits.push(i, j);
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      if (!want[i] || wait[i] || !W.yields[i].length) continue;
+      const u = W.units[i], reach = u.v * STEP_S + 1e-9;
+      for (const y of W.yields[i]) {
+        const ahead = zoneAhead(u, st.d[i], st.s[i], y.za);
+        if (ahead.inside || ahead.dist > reach) continue;
+        if (mustYield(W, st, i, y, ahead, t)) { wait[i] = 2; by[i] = y.j; break; }
+      }
+    }
+    if (!apply) {   // estado para exibir: todas as direções em dia
+      for (let i = 0; i < n; i++) ensureHeading(W, st, i);
+      return 0;
+    }
+    let moved = 0;
+    for (let i = 0; i < n; i++) {
+      if (!want[i] || wait[i]) continue;
+      advance(W.units[i], st, i);
+      moved++;
+    }
+    st.k++;
+    return moved;
+  }
+
+  /* ── Relatório (horizonte) ────────────────────────────────────────────── */
+
+  function createRun(W, nSteps) {
+    return {
+      W, nSteps, st: initState(W), collisions: [], open: new Map(), truncated: false, checkpoints: [],
+      frozenAt: null, frozenSnap: null, finished: false,
+      stats: W.units.map(() => ({ sensorStops: 0, sensorTime: 0, prioStops: 0, prioTime: 0, longest: 0, cur: 0, since: 0, reason: 0, by: -1, last: 0, lastEnd: -Infinity }))
+    };
+  }
+
+  /** Registra contatos e esperas do passo que acabou de ser decidido (instante t). */
+  function record(run, t) {
+    const { st, W } = run, n = W.units.length, seen = new Set();
+    for (let h = 0; h < st.hits.length; h += 2) {
+      const i = st.hits[h], j = st.hits[h + 1], key = i * n + j;
+      seen.add(key);
+      const ev = run.open.get(key);
+      if (ev) ev.t1 = t;
+      else if (run.collisions.length < MAX_EVENTS) {
+        const A = st.poses[i], B = st.poses[j];
+        const nev = { a: W.units[i].id, b: W.units[j].id, t0: t, t1: t, x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+        run.collisions.push(nev);
+        run.open.set(key, nev);
+      } else run.truncated = true;
+    }
+    run.open.forEach((ev, key) => { if (!seen.has(key)) run.open.delete(key); });
+    run.stats.forEach((s, i) => {
+      const r = st.wait[i];
+      if (!r) {
+        if (s.reason) s.lastEnd = t;
+        s.reason = 0;
+        s.cur = 0;
+        return;
+      }
+      if (s.reason !== r) {
+        // anda-e-para seguido (fila atrás de outro AGV) conta como uma parada só
+        if (r !== s.last || t - s.lastEnd > RESUME_S) { if (r === 1) s.sensorStops++; else s.prioStops++; }
+        s.last = r;
+        s.cur = 0;
+        s.since = t;
+      }
+      s.reason = r;
+      s.by = st.by[i];
+      s.cur += STEP_S;
+      if (r === 1) s.sensorTime += STEP_S; else s.prioTime += STEP_S;
+      s.longest = Math.max(s.longest, s.cur);
+    });
+  }
+
+  /**
+   * Avança o relatório até o prazo (performance.now()). Guarda fotografias do estado a cada 60 s para ir a qualquer
+   * instante rapidamente; se nada mais pode mudar (todos parados ou esperando), completa o horizonte de uma vez.
+   * @returns {boolean} terminou
+   */
+  function advanceRun(run, deadline) {
+    const { W, st } = run;
+    while (st.k < run.nSteps) {
+      if (st.k % CHECKPOINT === 0) run.checkpoints[st.k / CHECKPOINT] = snapshot(st);
+      const t = st.k * STEP_S;
+      const moved = step(W, st);
+      record(run, t);
+      if (!moved && t >= W.maxDelay) {   // congelado: o estado não muda mais até o fim do horizonte
+        const rest = (run.nSteps - st.k) * STEP_S;
+        run.stats.forEach(s => {
+          if (!s.reason) return;
+          s.cur += rest;
+          s.longest = Math.max(s.longest, s.cur);
+          if (s.reason === 1) s.sensorTime += rest; else s.prioTime += rest;
+        });
+        run.open.forEach(ev => { ev.t1 = (run.nSteps - 1) * STEP_S; });
+        run.frozenAt = st.k;
+        run.frozenSnap = snapshot(st);
+        break;
+      }
+      if (performance.now() > deadline) return false;
+    }
+    run.finished = true;
+    return true;
+  }
+
+  /** Estado no passo k: parte da fotografia mais próxima do relatório (ou do estado atual) e anda o que falta. */
+  function stateAt(W, run, k, cur) {
+    let st = null;
+    if (run && run.W === W) {
+      if (run.frozenAt !== null && k >= run.frozenAt) { st = restore(W, run.frozenSnap); st.k = k; }
+      else {
+        const c = Math.min(Math.floor(k / CHECKPOINT), run.checkpoints.length - 1);
+        if (c >= 0 && run.checkpoints[c]) st = restore(W, run.checkpoints[c]);
+      }
+    }
+    if (cur && cur.k <= k && (!st || cur.k > st.k)) st = cur;
+    if (!st || st.k > k) st = initState(W);
+    while (st.k < k) step(W, st);
+    return st;
+  }
+
+  return {
+    AGV_LONG, AGV_SHORT, SENSOR_M, DT: STEP_S, MAX_EVENTS,
+    poseOn, overlap, conflictZones, createWorld, initState, step, createRun, advanceRun, stateAt
+  };
+})();
+
 const AgvFlow = (() => {
-  const AGV_LONG = 1.5, AGV_SHORT = 0.8;       // dimensões do AGV (m); fica comprido no trilho
+  const T = AgvTraffic;
   const GRID = 10;                              // grade principal: 10 m por quadrado
   const SNAP_PX = 12;                           // raio de ligação em nós e trechos (px)
   const PICK_PX = 9;                            // tolerância para clicar num trecho (px)
   const LANE_PX = 4;                            // afastamento entre as cores de trilhos que dividem um trecho (px)
-  const SIM_DT = 0.1;                           // passo da análise de colisões (s)
   const DAY_S = 18 * 3600;                      // um dia de operação = 18 h
-  const MAX_EVENTS = 1000;                      // o relatório para de contar depois disto
+  const STUCK_S = 60;                           // parado esperando há mais que isto no fim do horizonte = travado
   const END_MODES = { stop: 'Para no fim', pingpong: 'Vai e volta', loop: 'Recomeça no início' };
   const DIR_OPTIONS = [[1, '▶ No sentido do trilho'], [-1, '◀ Contra o sentido do trilho']];
   const M = AgvModel;
@@ -4940,11 +5353,16 @@ const AgvFlow = (() => {
   let draft = null;          // traço em andamento
   let drag = null;           // { kind: 'pan' | 'agv' | 'node' | 'group', … }
   let hoverSnap = null;      // { kind: 'node' | 'trecho', id, p } onde o traço/ponta vai ligar
-  let simTime = 0, playing = false, lastTs = 0, loopOn = false;
-  let collisions = [];       // [{ a, b, t0, t1, x, y }]
+  let playing = false, lastTs = 0, loopOn = false;
+  let world = null;          // mundo da simulação (AgvTraffic) da configuração atual
+  let live = null;           // estado exibido (instante atual da simulação contínua)
+  let simClock = 0;          // relógio da animação (s); o estado anda em passos de 0,1 s até ele
+  let run = null;            // relatório do horizonte (colisões, esperas e fotografias do estado)
+  let lastSimKey = '';
   let geomCache = new Map(); // trilhoId → geometria
+  let zoneCache = new Map(); // "idA|idB" → zonas de conflito entre dois trilhos
   let drawQueued = false;
-  let analysisTimer = 0, analysisRun = 0;
+  let analysisTimer = 0;
   const undoStack = [];
 
   const ac = () => config.agvCfg;
@@ -4956,7 +5374,7 @@ const AgvFlow = (() => {
   const nodeOf = id => byId(ac().nodes, id);
   const trilhosOf = trId => ac().trilhos.filter(tl => tl.trechos.includes(trId));
   const fmt = (v, d = 2) => Fmt.comma(v, d);
-  const { dist } = M;
+  const { dist, pointAt } = M;
 
   function geom(tl) {
     if (!geomCache.has(tl.id)) geomCache.set(tl.id, M.trilhoGeom(ac(), tl));
@@ -4982,7 +5400,7 @@ const AgvFlow = (() => {
   function fit() {
     const pts = [];
     ac().trechos.forEach(t => pts.push(...t.pts));
-    ac().agvs.forEach(a => { const p = poseAt(a, 0); pts.push([p.x, p.y]); });
+    ac().agvs.forEach(a => { const p = restPose(a); pts.push([p.x, p.y]); });
     if (!pts.length) { Object.assign(view(), { cx: 0, cy: 0, zoom: 6 }); requestDraw(); return; }
     const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
     const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
@@ -4993,16 +5411,6 @@ const AgvFlow = (() => {
   }
 
   /* ── Posição sobre os trilhos ─────────────────────────────────────────── */
-
-  function pointAt(gm, g) {
-    const { pts, cum } = gm;
-    if (pts.length < 2) return pts[0] ? [pts[0][0], pts[0][1]] : [0, 0];
-    g = Math.min(gm.len, Math.max(0, g));
-    let lo = 0, hi = cum.length - 1;
-    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= g) lo = mid; else hi = mid; }
-    const f = (g - cum[lo]) / (cum[hi] - cum[lo] || 1);
-    return [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * f, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * f];
-  }
 
   const segAt = (gm, g) => gm.segs.find((s, i) => g <= s.g0 + s.len || i === gm.segs.length - 1);
 
@@ -5020,59 +5428,45 @@ const AgvFlow = (() => {
     return best;
   }
 
-  /* ── Movimento dos AGVs ───────────────────────────────────────────────── */
-
-  /** Distância percorrida no trilho no instante t (já com partida, sentido e regra de fim). */
-  function distanceAt(a, gm, t) {
-    const L = gm.len;
-    if (L <= 0) return 0;
-    const run = Math.max(0, t - (a.delay || 0));
-    let d = a.s0 + a.dir * (a.speed / 60) * run;
-    if (gm.closed || a.endMode === 'loop') d = ((d % L) + L) % L;
-    else if (a.endMode === 'pingpong') {
-      const p = 2 * L, m = ((d % p) + p) % p;
-      d = m <= L ? m : p - m;
-    } else d = Math.min(L, Math.max(0, d));
-    return d;
-  }
-
-  /**
-   * Pose do AGV: centro (eixo de rotação no MEIO) sobre o trilho; a direção é a da corda entre os pontos do trilho
-   * meio AGV à frente e atrás (corpo rígido, como a plataforma da Telemetria).
-   */
-  function poseAt(a, t) {
+  /** Posição configurada do AGV (a de partida, t = 0) — usada na edição. */
+  function restPose(a) {
     const tl = a.trilhoId != null ? trilho(a.trilhoId) : null;
     const gm = tl ? geom(tl) : null;
-    if (!gm || gm.pts.length < 2) return { x: a.x || 0, y: a.y || 0, ang: a.angle || 0, move: 0, onTrack: false };
-    const d = distanceAt(a, gm, t);
-    const h = AGV_LONG / 2;
-    const wrap = v => (gm.closed ? ((v % gm.len) + gm.len) % gm.len : v);
-    const [x, y] = pointAt(gm, d);
-    const f = pointAt(gm, wrap(d + h)), r = pointAt(gm, wrap(d - h));
-    const ang = Math.atan2(f[1] - r[1], f[0] - r[0]);
-    const dNext = distanceAt(a, gm, t + 0.05);
-    let move = Math.sign(dNext - d);
-    if (gm.closed && Math.abs(dNext - d) > gm.len / 2) move = -move;   // virada do circuito
-    const running = t >= (a.delay || 0) && move !== 0;
-    return { x, y, ang, move: running ? move : 0, onTrack: true };
+    if (!gm || gm.pts.length < 2 || !(gm.len > 0)) return { x: a.x || 0, y: a.y || 0, ang: a.angle || 0, d: null };
+    const d = gm.closed ? ((a.s0 % gm.len) + gm.len) % gm.len : Math.min(gm.len, Math.max(0, a.s0));
+    const p = T.poseOn(gm, d);
+    return { x: p.x, y: p.y, ang: Math.atan2(p.uy, p.ux), d };
   }
 
-  /** Retângulo do AGV: eixo u = sentido do trilho (comprimento de 1,50 m). */
-  const boxOf = (a, p) => ({ x: p.x, y: p.y, ux: Math.cos(p.ang), uy: Math.sin(p.ang), hu: AGV_LONG / 2, hv: AGV_SHORT / 2 });
-
-  /** Teste de sobreposição de dois retângulos girados (eixos separadores). */
-  function boxesOverlap(A, B) {
-    const axes = [[A.ux, A.uy], [-A.uy, A.ux], [B.ux, B.uy], [-B.uy, B.ux]];
-    const dx = B.x - A.x, dy = B.y - A.y;
-    return axes.every(([ax, ay]) => {
-      const rA = A.hu * Math.abs(A.ux * ax + A.uy * ay) + A.hv * Math.abs(-A.uy * ax + A.ux * ay);
-      const rB = B.hu * Math.abs(B.ux * ax + B.uy * ay) + B.hv * Math.abs(-B.uy * ax + B.ux * ay);
-      return Math.abs(dx * ax + dy * ay) <= rA + rB;
-    });
+  /** Zonas de conflito entre dois trilhos (cruzamentos, ligações e trechos em comum), até a geometria mudar. */
+  function zonesFor(idA, idB) {
+    const key = `${idA}|${idB}`;
+    if (!zoneCache.has(key)) {
+      const A = trilho(idA), B = trilho(idB);
+      zoneCache.set(key, A && B ? T.conflictZones(geom(A), geom(B)) : []);
+    }
+    return zoneCache.get(key);
   }
+
+  function resetGeom() {
+    geomCache = new Map();
+    zoneCache = new Map();
+  }
+
+  /** Outros trilhos com que este divide trechos ou se cruza. */
+  function sharing(tl) {
+    if (!tl.trechos.length) return [];
+    return ac().trilhos.filter(o => o !== tl && o.trechos.length).map(o => {
+      if (o.trechos.some(id => tl.trechos.includes(id))) return { o, kind: 'trecho em comum' };
+      return zonesFor(tl.id, o.id).length ? { o, kind: 'cruzamento' } : null;
+    }).filter(Boolean);
+  }
+
+  /* ── Simulação contínua e relatório ───────────────────────────────────── */
 
   const horizonS = () => (ac().days || 1) * DAY_S;
   const pad2 = v => String(v).padStart(2, '0');
+  const simNow = () => (live ? live.k * T.DT : 0);
 
   /** Instante como "Dia N · hh:mm:ss" (dias de 18 h). */
   function fmtTime(t) {
@@ -5080,95 +5474,64 @@ const AgvFlow = (() => {
     return `Dia ${day + 1} · ${pad2(Math.floor(r / 3600))}:${pad2(Math.floor((r % 3600) / 60))}:${pad2(Math.floor(r % 60))}`;
   }
 
-  /**
-   * Próximo instante em que o AGV "salta" (recomeça no início de um trilho aberto); entre saltos ele anda no máximo
-   * na sua velocidade, o que permite pular os trechos de tempo em que dois AGVs não têm como se encostar.
-   */
-  function nextJump(a, gm, t) {
-    if (!gm || gm.closed || a.endMode !== 'loop' || !(a.speed > 0) || gm.len <= 0) return Infinity;
-    const v = a.speed / 60, run = Math.max(0, t - (a.delay || 0));
-    const d = a.s0 + a.dir * v * run;
-    const target = a.dir > 0 ? (Math.floor(d / gm.len) + 1) * gm.len : (Math.ceil(d / gm.len) - 1) * gm.len;
-    return (a.delay || 0) + (target - a.s0) / (a.dir * v);
+  function fmtDur(sec) {
+    if (sec < 60) return `${fmt(sec, 1)} s`;
+    if (sec < 3600) return `${Math.floor(sec / 60)} min ${pad2(Math.floor(sec % 60))} s`;
+    return `${Math.floor(sec / 3600)} h ${pad2(Math.floor((sec % 3600) / 60))} min`;
   }
 
-  /**
-   * Relatório de colisões: simula os AGVs no horizonte (passo de 0,1 s) e registra cada intervalo de contato. Cada par
-   * só é testado quando pode se encostar (distância ÷ velocidades), e o cálculo roda em partes para não travar a tela.
-   */
-  function analyze() {
-    const run = ++analysisRun;
-    const list = ac().agvs.slice();
-    const nSteps = Math.round(horizonS() / SIM_DT);
-    const reach = Math.hypot(AGV_LONG, AGV_SHORT);
-    const gms = list.map(a => { const tl = trilho(a.trilhoId); return tl ? geom(tl) : null; });
-    const vmax = list.map(a => Math.max(0, a.speed) / 60);
-    const boxes = list.map(() => ({ k: -1, box: null }));
-    const boxAt = (i, k) => {
-      if (boxes[i].k !== k) boxes[i] = { k, box: boxOf(list[i], poseAt(list[i], k * SIM_DT)) };
-      return boxes[i].box;
-    };
-    const pairs = [];
-    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) pairs.push({ i, j, next: 0, ev: null });
-    const out = [];
-    let k = 0;
-    const step = () => {
-      if (run !== analysisRun) return;   // outra análise começou
-      const deadline = performance.now() + 25;
-      while (k <= nSteps && out.length < MAX_EVENTS) {
-        const t = k * SIM_DT;
-        let nextK = Infinity;
-        for (const pr of pairs) {
-          if (pr.next <= k) {
-            const A = boxAt(pr.i, k), B = boxAt(pr.j, k);
-            const gap = Math.hypot(A.x - B.x, A.y - B.y) - reach;
-            const vrel = vmax[pr.i] + vmax[pr.j];
-            if (gap <= 0 && boxesOverlap(A, B)) {
-              if (!pr.ev) {
-                pr.ev = { a: list[pr.i].id, b: list[pr.j].id, t0: t, t1: t, x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
-                out.push(pr.ev);
-              } else pr.ev.t1 = t;
-              pr.next = vrel > 0 ? k + 1 : Infinity;   // parados encostados: contato até o fim
-              if (vrel === 0) pr.ev.t1 = nSteps * SIM_DT;
-            } else {
-              pr.ev = null;
-              const safe = Math.min(vrel > 0 ? Math.max(0, gap) / vrel : Infinity, nextJump(list[pr.i], gms[pr.i], t) - t, nextJump(list[pr.j], gms[pr.j], t) - t);
-              pr.next = k + Math.max(1, Math.floor(safe / SIM_DT));
-            }
-          }
-          if (pr.next < nextK) nextK = pr.next;
-        }
-        k = nextK;
-        if (performance.now() > deadline) {
-          $('agvCollisionBadge').textContent = `Analisando… ${Math.min(99, Math.floor((k / nSteps) * 100))}%`;
-          setTimeout(step, 0);
-          return;
-        }
-      }
-      collisions = out;
-      renderCollisions();
-      requestDraw();
-    };
-    step();
+  /** O que muda o movimento: se mudar, a simulação volta a t = 0 e o relatório é refeito. */
+  const simKey = () => JSON.stringify([
+    ac().trechos.map(t => [t.id, t.a, t.b, t.pts]),
+    ac().trilhos.map(t => [t.id, t.trechos, t.rev]),
+    ac().agvs.map(a => [a.id, a.trilhoId, a.s0, a.speed, a.dir, a.endMode, a.delay, !!a.priority, a.x, a.y, a.angle])
+  ]);
+
+  /** Recria a simulação a partir da configuração (t = 0). Durante um arraste, sem relatório nem regras (só posições). */
+  function resetSim(full = true) {
+    clearTimeout(analysisTimer);
+    run = null;
+    world = T.createWorld(ac(), geom, zonesFor);
+    live = T.initState(world);
+    simClock = 0;
+    if (full) {
+      T.step(world, live, false);
+      scheduleAnalysis();
+    }
+    requestDraw();
   }
 
   function scheduleAnalysis() {
     clearTimeout(analysisTimer);
-    analysisRun++;   // cancela a análise em andamento
+    run = null;
     $('agvCollisionBadge').textContent = 'Analisando…';
-    analysisTimer = setTimeout(analyze, 150);
+    analysisTimer = setTimeout(startAnalysis, 150);
   }
 
-  /** AGVs encostando em outro no instante t (desenho em vermelho), em qualquer instante da simulação contínua. */
-  function collidingAt(t) {
-    const list = ac().agvs, boxes = list.map(a => boxOf(a, poseAt(a, t)));
-    const set = new Set();
-    for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        if (boxesOverlap(boxes[i], boxes[j])) { set.add(list[i].id); set.add(list[j].id); }
+  /** Relatório do horizonte: roda em partes, sem travar a tela. */
+  function startAnalysis() {
+    const r = T.createRun(world, Math.round(horizonS() / T.DT));
+    run = r;
+    const work = () => {
+      if (run !== r) return;   // outra análise começou
+      if (!T.advanceRun(r, performance.now() + 25)) {
+        $('agvCollisionBadge').textContent = `Analisando… ${Math.min(99, Math.floor((r.st.k / r.nSteps) * 100))}%`;
+        setTimeout(work, 0);
+        return;
       }
-    }
-    return set;
+      renderReport();
+      requestDraw();
+    };
+    work();
+  }
+
+  /** Vai para o instante t (usa as fotografias do relatório para não simular tudo de novo). */
+  function setTime(t) {
+    if (!world) return;
+    live = T.stateAt(world, run, Math.max(0, Math.round(t / T.DT)), live);
+    T.step(world, live, false);   // esperas e contatos do instante exibido
+    simClock = simNow();
+    requestDraw();
   }
 
   /* ── Edição com desfazer ──────────────────────────────────────────────── */
@@ -5180,9 +5543,9 @@ const AgvFlow = (() => {
     if (undoStack.length > 80) undoStack.shift();
   }
 
-  function undo() {
+  function undo(silent = false) {
     const snap = undoStack.pop();
-    if (!snap) { showMemToast('Nada para desfazer', true); return; }
+    if (!snap) { if (!silent) showMemToast('Nada para desfazer', true); return; }
     Object.assign(ac(), JSON.parse(snap));
     if (routeEdit !== null && !trilho(routeEdit)) { routeEdit = null; tool = 'select'; }
     changed();
@@ -5191,8 +5554,9 @@ const AgvFlow = (() => {
 
   /** Depois de qualquer alteração: refaz a geometria, as listas, a análise e salva. */
   function changed() {
-    geomCache = new Map();
-    scheduleAnalysis();
+    resetGeom();
+    const key = simKey();
+    if (key !== lastSimKey || !world) { lastSimKey = key; resetSim(); }
     if (sel && !(sel.kind === 'agv' ? agv(sel.id) : sel.kind === 'trilho' ? trilho(sel.id) : trecho(sel.id))) sel = null;
     renderLists();
     renderPanel();
@@ -5209,9 +5573,9 @@ const AgvFlow = (() => {
   function captureAnchors() {
     return ac().agvs.filter(a => a.trilhoId != null).map(a => {
       const tl = trilho(a.trilhoId), gm = tl && geom(tl);
-      const p = poseAt(a, 0);
-      if (!gm || !gm.segs.length) return { a, p };
-      const d = distanceAt({ ...a, delay: 0 }, gm, 0);
+      const p = restPose(a);
+      if (!gm || !gm.segs.length || p.d === null) return { a, p };
+      const d = p.d;
       const sg = segAt(gm, d);
       const local = sg.len > 0 ? Math.min(1, Math.max(0, (d - sg.g0) / sg.len)) : 0;
       return { a, p, tlId: tl.id, trId: sg.id, rev: sg.rev, frac: sg.rev ? 1 - local : local };
@@ -5220,7 +5584,7 @@ const AgvFlow = (() => {
 
   /** @param {boolean} ownTrilho  o AGV não troca de trilho (montagem do caminho) */
   function restoreAnchors(anchors, ownTrilho = false) {
-    geomCache = new Map();
+    resetGeom();
     anchors.forEach(an => {
       const { a, p } = an;
       const own = trilho(an.tlId);
@@ -5310,9 +5674,7 @@ const AgvFlow = (() => {
     routeEdit = null;
     if (tl && !tl.trechos.length) {
       ac().agvs.forEach(a => {
-        if (a.trilhoId !== tl.id) return;
-        const p = poseAt(a, 0);
-        Object.assign(a, { trilhoId: null, x: p.x, y: p.y, angle: p.ang });
+        if (a.trilhoId === tl.id) assignAgv(a, null);
       });
       ac().trilhos = ac().trilhos.filter(t => t !== tl);
       changed();
@@ -5328,11 +5690,32 @@ const AgvFlow = (() => {
     $('agvHint').textContent = routeHint();
   }
 
+  /** Coloca o AGV no trilho (no ponto mais perto de onde ele está) ou o deixa solto (tl = null). */
+  function assignAgv(a, tl) {
+    const p = restPose(a);
+    if (!tl || !tl.trechos.length) { Object.assign(a, { trilhoId: null, x: p.x, y: p.y, angle: p.ang }); return; }
+    a.trilhoId = tl.id;
+    a.s0 = M.nearestOnPoly(geom(tl).pts, p.x, p.y).g;
+  }
+
+  /** Trecho marcado/desmarcado num trilho (painel do trecho): o caminho vai até ele, ou o trecho sai da ponta. */
+  function toggleTrechoIn(tl, trId, on) {
+    const ids = tl.trechos;
+    if (!on && ids[0] !== trId && ids[ids.length - 1] !== trId) {
+      showMemToast('Só dá para tirar trechos das pontas do caminho (use ✎ Editar caminho no trilho)', true);
+      renderPanel();
+      return;
+    }
+    let msg = null;
+    editNet(() => { msg = on ? M.extendRouteTo(ac(), tl, trId) : M.toggleRouteTrecho(ac(), tl, trId); }, true);
+    if (msg) { undo(true); showMemToast(msg, true); }
+  }
+
   function addAgv(m, keepTool) {
     const prefer = sel && (sel.kind === 'trilho' ? sel.id : sel.kind === 'agv' ? (agv(sel.id) || {}).trilhoId : null);
     const near = nearestTrilho(m[0], m[1], 20 / view().zoom + 0.5, prefer);
     if (!near) { showMemToast('Clique sobre um trilho para colocar o AGV', true); return; }
-    const a = { id: ac().nextId++, name: `AGV ${ac().agvs.length + 1}`, trilhoId: near.tl.id, s0: near.n.g, speed: 30, dir: 1, endMode: 'stop', delay: 0, x: m[0], y: m[1], angle: 0 };
+    const a = { id: ac().nextId++, name: `AGV ${ac().agvs.length + 1}`, trilhoId: near.tl.id, s0: near.n.g, speed: 30, dir: 1, endMode: 'stop', delay: 0, priority: false, x: m[0], y: m[1], angle: 0 };
     edit(() => { ac().agvs.push(a); });
     sel = { kind: 'agv', id: a.id };
     if (!keepTool) setTool('select');
@@ -5482,28 +5865,35 @@ const AgvFlow = (() => {
   }
 
   function drawAgvs() {
-    const hits = collidingAt(simTime);
-    ac().agvs.forEach(a => {
-      const p = poseAt(a, simTime);
-      const b = boxOf(a, p);
-      const color = a.trilhoId != null && trilho(a.trilhoId) ? trilho(a.trilhoId).color : '#64748b';
+    if (!live || !world) return;
+    const hits = new Set(live.hits);
+    const z = view().zoom, t = simNow();
+    ac().agvs.forEach((a, i) => {
+      const u = world.units[i], p = live.poses[i];
+      if (!u || !p) return;
+      const color = u.gm && trilho(u.tlId) ? trilho(u.tlId).color : '#64748b';
       const [cx, cy] = toPx(p.x, p.y);
-      const z = view().zoom;
-      const hu = Math.max(3, b.hu * z), hv = Math.max(2, b.hv * z);
+      const hu = Math.max(3, p.hu * z), hv = Math.max(2, p.hv * z);
       const isSel = sel && sel.kind === 'agv' && sel.id === a.id;
-      const hit = hits.has(a.id);
-      const dir = p.move || a.dir;
+      const hit = hits.has(i), wait = live.wait[i];
+      const dir = u.gm ? live.s[i] : (a.dir < 0 ? -1 : 1);
+      const active = u.gm && !live.done[i] && u.v > 0 && t >= u.delay;
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.rotate(p.ang);
+      ctx.rotate(Math.atan2(p.uy, p.ux));
+      if (active && z >= 3) {   // alcance do sensor (1 m à frente)
+        const sw = T.SENSOR_M * z;
+        ctx.fillStyle = wait === 1 ? 'rgba(250,204,21,0.38)' : 'rgba(148,163,184,0.14)';
+        ctx.fillRect(dir > 0 ? hu : -hu - sw, -hv, sw, 2 * hv);
+      }
       ctx.fillStyle = hit ? '#ef4444' : color;
       ctx.globalAlpha = 0.9;
       ctx.beginPath(); ctx.roundRect(-hu, -hv, 2 * hu, 2 * hv, Math.min(3, hv)); ctx.fill();
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = hit ? '#fecaca' : (isSel ? '#ffffff' : 'rgba(11,13,18,0.9)');
-      ctx.lineWidth = isSel || hit ? 2.5 : 1.5;
+      ctx.strokeStyle = hit ? '#fecaca' : wait === 1 ? '#facc15' : wait === 2 ? '#c084fc' : (isSel ? '#ffffff' : 'rgba(11,13,18,0.9)');
+      ctx.lineWidth = isSel || hit || wait ? 2.5 : 1.5;
       ctx.stroke();
-      // frente (para onde está andando) e seta do movimento
+      // frente (para onde anda) e seta do movimento
       const band = Math.max(1.5, hu * 0.2);
       ctx.fillStyle = 'rgba(11,13,18,0.75)';
       ctx.fillRect(dir > 0 ? hu - band : -hu, -hv, band, 2 * hv);
@@ -5514,7 +5904,11 @@ const AgvFlow = (() => {
         ctx.closePath(); ctx.fill();
       }
       ctx.restore();
-      if (z >= 3 || isSel) label(`${hit ? '⚠ ' : ''}${a.name}`, cx, cy - Math.max(hu, hv) - 12, hit ? '#fca5a5' : '#f1f5f9');
+      if (z >= 3 || isSel) {
+        const tag = wait === 1 ? ' ⏸ sensor' : wait === 2 ? ' ⏸ prioridade' : '';
+        const txtColor = hit ? '#fca5a5' : wait === 1 ? '#fde68a' : wait === 2 ? '#e9d5ff' : '#f1f5f9';
+        label(`${hit ? '⚠ ' : ''}${a.priority ? '★ ' : ''}${a.name}${tag}`, cx, cy - Math.max(hu, hv) - 12, txtColor);
+      }
     });
   }
 
@@ -5560,8 +5954,8 @@ const AgvFlow = (() => {
     ctx.textAlign = 'left';
     ctx.fillText(`${barM} m`, 14, H - 23);
     $('agvZoomBadge').textContent = `Grade: 10 m · zoom ${fmt(z, 1)} px/m`;
-    $('agvTimeBadge').textContent = fmtTime(simTime);
-    $('agvScrubber').value = Math.min(simTime, horizonS());
+    $('agvTimeBadge').textContent = fmtTime(simNow());
+    $('agvScrubber').value = Math.min(simNow(), horizonS());
   }
 
   function requestDraw() {
@@ -5576,8 +5970,13 @@ const AgvFlow = (() => {
     if (!loopOn) return;
     const dt = lastTs ? (ts - lastTs) / 1000 : 0;
     lastTs = ts;
-    if (playing && ui.view === 'agv') {
-      simTime += dt * Number($('agvSpeedSelect').value || 1);   // contínuo: não reinicia no fim do horizonte
+    if (playing && ui.view === 'agv' && live) {
+      // contínuo: não reinicia no fim do horizonte; anda em passos de 0,1 s até o relógio
+      simClock += dt * Number($('agvSpeedSelect').value || 1);
+      let guard = 0;
+      while ((live.k + 1) * T.DT <= simClock + 1e-9 && guard++ < 50000) T.step(world, live);
+      if (guard >= 50000) simClock = simNow();   // máquina não acompanha: segue do ponto alcançado
+      T.step(world, live, false);
       draw();
     }
     requestAnimationFrame(tick);
@@ -5588,10 +5987,9 @@ const AgvFlow = (() => {
     $('agvPlayBtn').textContent = on ? '⏸ Pausar' : '▶ Simular';
     $('agvPlayBtn').classList.toggle('active', on);
     lastTs = 0;
+    simClock = simNow();
     if (on && !loopOn) { loopOn = true; requestAnimationFrame(tick); }
   }
-
-  const setTime = t => { simTime = Math.max(0, t); requestDraw(); };
 
   /* ── Ferramentas e ponteiro ───────────────────────────────────────────── */
 
@@ -5610,7 +6008,7 @@ const AgvFlow = (() => {
   function routeHint() {
     const tl = trilho(routeEdit);
     if (!tl) return '';
-    return `Caminho do ${tl.name}: clique nos trechos tracejados para acrescentar numa ponta, ou no trecho de uma ponta para tirar · Enter ou Esc conclui`;
+    return `Caminho do ${tl.name}: clique em qualquer trecho e o caminho vai até ele pelo trajeto mais curto · clique no trecho de uma ponta para tirar · Enter ou Esc conclui`;
   }
 
   function setTool(t) {
@@ -5629,11 +6027,13 @@ const AgvFlow = (() => {
   const pointer = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
 
   function pickAgv(px, py) {
+    if (!live) return null;
     const [mx, my] = toM(px, py), pad = 4 / view().zoom;
     for (let i = ac().agvs.length - 1; i >= 0; i--) {
-      const a = ac().agvs[i], b = boxOf(a, poseAt(a, simTime));
+      const b = live.poses[i];
+      if (!b) continue;
       const dx = mx - b.x, dy = my - b.y;
-      if (Math.abs(dx * b.ux + dy * b.uy) <= b.hu + pad && Math.abs(-dx * b.uy + dy * b.ux) <= b.hv + pad) return a.id;
+      if (Math.abs(dx * b.ux + dy * b.uy) <= b.hu + pad && Math.abs(-dx * b.uy + dy * b.ux) <= b.hv + pad) return ac().agvs[i].id;
     }
     return null;
   }
@@ -5733,12 +6133,11 @@ const AgvFlow = (() => {
       if (near) {
         a.trilhoId = near.tl.id;
         a.s0 = near.n.g;
-        simTime = 0;
       } else {
         Object.assign(a, { trilhoId: null, x: m[0], y: m[1] });
       }
       drag.moved = true;
-      requestDraw();
+      resetSim(false);
       return;
     }
     if (drag && (drag.kind === 'node' || drag.kind === 'group')) {
@@ -5753,8 +6152,7 @@ const AgvFlow = (() => {
       }
       drag.moved = true;
       restoreAnchors(drag.anchors);
-      scheduleAnalysis();
-      requestDraw();
+      resetSim(false);
       return;
     }
     hoverSnap = null;
@@ -5877,12 +6275,27 @@ const AgvFlow = (() => {
     return d;
   }
 
-  /** Botão de um trilho (cor + nome) que seleciona o trilho. */
-  function trilhoChip(tl) {
-    const chip = button(`● ${tl.name}`, 'eng-chip', () => { sel = { kind: 'trilho', id: tl.id }; renderPanel(); requestDraw(); }, 'Ver o trilho');
-    chip.style.color = tl.color;
-    return chip;
+  /** Lista de caixas de marcar: items = [{ text, checked, disabled, onChange(checked) }]. */
+  function checklist(items) {
+    const box = document.createElement('div');
+    box.className = 'agv-checklist';
+    items.forEach(it => {
+      const row = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = it.checked;
+      cb.disabled = !!it.disabled;
+      cb.addEventListener('change', () => it.onChange(cb.checked));
+      const span = document.createElement('span');
+      span.textContent = it.text;
+      if (it.color) span.style.color = it.color;
+      row.append(cb, span);
+      box.appendChild(row);
+    });
+    return box;
   }
+
+  const agvNames = list => list.map(a => `${a.priority ? '★ ' : ''}${a.name}`).join(', ');
 
   const trilhoKind = (tl, gm) => (!tl.trechos.length ? 'Vazio' : (gm.closed ? 'Circuito' : 'Aberto'));
 
@@ -5902,12 +6315,15 @@ const AgvFlow = (() => {
     if (sel.kind === 'trecho') {
       head.textContent = { line: 'Linha', curve: 'Curva', path: 'Traço (lápis)' }[item.kind];
       const users = trilhosOf(item.id);
-      const chips = document.createElement('div');
-      chips.className = 'eng-chips';
-      chips.append(info('Trilhos:'), ...(users.length ? users.map(trilhoChip) : [info('nenhum passa por este trecho')]));
+      const agvsHere = ac().agvs.filter(a => users.some(tl => tl.id === a.trilhoId));
       const len = M.trechoLen(item);
       panel.append(
-        chips,
+        info('Trilhos que passam aqui (marcar leva o caminho do trilho até este trecho):'),
+        ac().trilhos.length
+          ? checklist(ac().trilhos.map(tl => ({ text: tl.name, color: tl.color, checked: tl.trechos.includes(item.id), onChange: on => toggleTrechoIn(tl, item.id, on) })))
+          : info('Nenhum trilho ainda.'),
+        info(agvsHere.length ? `AGVs que passam aqui: ${agvNames(agvsHere)}` : 'Nenhum AGV passa por este trecho.'),
+        ...(users.length > 1 ? [info('⇄ Trecho compartilhado: os AGVs se enxergam pelo sensor e, se algum tiver prioridade, os outros esperam por ele.')] : []),
         field('Comprimento (m)', numberInput(Math.round(len * 100) / 100, 0.1, v => setTrechoLength(item, v))),
         info('Ao mudar o comprimento, o desenho se ajusta à medida e o que está ligado acompanha.')
       );
@@ -5946,11 +6362,23 @@ const AgvFlow = (() => {
           'Escolhe os trechos por onde o trilho passa (inclusive trechos de outros trilhos, nos desvios)'),
         button('⇄ Inverter sentido', 'btn', () => reverseTrilho(item), 'Os AGVs do trilho passam a andar no outro sentido')
       );
+      const shared = sharing(item);
       panel.append(
         field('Nome', name),
         field('Cor', color),
         info(`${trilhoKind(item, gm)} · ${item.trechos.length} trecho(s) · ${fmt(gm.len, 1)} m · ${nAgv} AGV(s)`),
         row,
+        info('AGVs que andam neste trilho:'),
+        ac().agvs.length
+          ? checklist(ac().agvs.map(a => {
+            const other = a.trilhoId !== item.id && trilho(a.trilhoId);
+            return { text: `${a.priority ? '★ ' : ''}${a.name}${other ? ` (hoje no ${other.name})` : ''}`, checked: a.trilhoId === item.id, disabled: !item.trechos.length,
+              onChange: on => edit(() => assignAgv(a, on ? item : null)) };
+          }))
+          : info('Nenhum AGV ainda — use a ferramenta ▭ AGV.'),
+        info(shared.length
+          ? `⇄ Divide o caminho com: ${shared.map(x => `${x.o.name} (${x.kind})`).join(', ')}. Nesses pontos os AGVs se enxergam pelo sensor e respeitam a prioridade.`
+          : 'Não cruza nem divide trechos com outros trilhos.'),
         button('✕ Excluir trilho', 'btn btn-delete', () => deleteTrilho(item.id), 'Os trechos que só este trilho usa são apagados; os AGVs dele ficam soltos')
       );
       return;
@@ -5964,13 +6392,8 @@ const AgvFlow = (() => {
     const trilhos = [['', '— solto (não anda) —'], ...ac().trilhos.filter(t => t.trechos.length).map(t => [t.id, t.name])];
     panel.append(
       field('Nome', name),
-      field('Trilho', selectInput(trilhos, item.trilhoId ?? '', v => edit(() => {
-        const p = poseAt(item, 0);
-        const tl = trilho(Number(v));
-        if (!tl) { Object.assign(item, { trilhoId: null, x: p.x, y: p.y, angle: p.ang }); return; }
-        item.trilhoId = tl.id;
-        item.s0 = M.nearestOnPoly(geom(tl).pts, p.x, p.y).g;
-      }))),
+      field('Trilho', selectInput(trilhos, item.trilhoId ?? '', v => edit(() => assignAgv(item, trilho(Number(v)))))),
+      field('Prioridade', selectInput([['0', 'Não'], ['1', '★ Sim — os outros esperam']], item.priority ? '1' : '0', v => edit(() => { item.priority = v === '1'; }))),
       field('Velocidade (m/min)', numberInput(item.speed, 1, v => edit(() => { item.speed = Math.max(0, v || 0); }))),
       field('Sentido', selectInput(DIR_OPTIONS, item.dir, v => edit(() => { item.dir = Number(v) < 0 ? -1 : 1; }))),
       field('Posição inicial (m)', numberInput(Math.round(item.s0 * 100) / 100, 0.1, v => edit(() => { item.s0 = Math.max(0, v || 0); }))),
@@ -5980,7 +6403,7 @@ const AgvFlow = (() => {
     const tl = trilho(item.trilhoId);
     panel.append(
       info(tl
-        ? `${trilhoKind(tl, geom(tl))} · ${fmt(geom(tl).len, 1)} m · AGV ${AGV_SHORT.toFixed(2)} × ${AGV_LONG.toFixed(2)} m, comprido no trilho`
+        ? `${trilhoKind(tl, geom(tl))} · ${fmt(geom(tl).len, 1)} m · AGV ${T.AGV_SHORT.toFixed(2)} × ${T.AGV_LONG.toFixed(2)} m, comprido no trilho · sensor de proximidade: ${fmt(T.SENSOR_M, 0)} m à frente (para e espera)`
         : 'Arraste o AGV (ou escolha um trilho) para ele andar sobre o caminho'),
       button('✕ Excluir AGV', 'btn btn-delete', () => deleteAgv(item.id))
     );
@@ -6001,7 +6424,7 @@ const AgvFlow = (() => {
   function renderLists() {
     const tb = $('agvTrilhoBody');
     tb.innerHTML = '';
-    if (!ac().trilhos.length) emptyRow(tb, 7, 'Nenhum trilho. Use Linha, Curva ou Lápis para desenhar.');
+    if (!ac().trilhos.length) emptyRow(tb, 8, 'Nenhum trilho. Use Linha, Curva ou Lápis para desenhar.');
     ac().trilhos.forEach(tl => {
       const color = document.createElement('input');
       color.type = 'color';
@@ -6014,51 +6437,85 @@ const AgvFlow = (() => {
       name.value = tl.name;
       name.addEventListener('change', () => edit(() => { tl.name = name.value.trim() || tl.name; }));
       const gm = geom(tl);
-      const nAgv = ac().agvs.filter(a => a.trilhoId === tl.id).length;
+      const tlAgvs = ac().agvs.filter(a => a.trilhoId === tl.id);
+      const shared = sharing(tl);
       const actions = document.createElement('div');
       actions.className = 'btn-group';
       actions.append(
         button('✎', 'btn', () => startRouteEdit(tl.id), 'Editar o caminho (trechos por onde passa)'),
         button('✕', 'btn btn-delete', () => deleteTrilho(tl.id), 'Excluir o trilho (os AGVs dele ficam soltos)')
       );
-      cellRow(tb, [color, name, String(tl.trechos.length), `${fmt(gm.len, 1)} m`, trilhoKind(tl, gm), String(nAgv), actions],
+      cellRow(tb, [color, name, String(tl.trechos.length), `${fmt(gm.len, 1)} m`, trilhoKind(tl, gm), tlAgvs.length ? agvNames(tlAgvs) : '—',
+        shared.length ? shared.map(x => `${x.o.name} (${x.kind === 'cruzamento' ? 'cruza' : 'comum'})`).join(', ') : '—', actions],
         () => { sel = { kind: 'trilho', id: tl.id }; renderPanel(); requestDraw(); });
     });
 
     const ab = $('agvAgvBody');
     ab.innerHTML = '';
-    if (!ac().agvs.length) emptyRow(ab, 6, 'Nenhum AGV. Use a ferramenta ▭ AGV e clique sobre um trilho.');
+    if (!ac().agvs.length) emptyRow(ab, 7, 'Nenhum AGV. Use a ferramenta ▭ AGV e clique sobre um trilho.');
     ac().agvs.forEach(a => {
       const tl = trilho(a.trilhoId);
       const dot = document.createElement('span');
       dot.className = 'agv-dot';
       dot.style.background = tl ? tl.color : '#64748b';
-      cellRow(ab, [dot, a.name, tl ? tl.name : 'solto', `${fmt(a.speed, 1)} m/min`, a.dir > 0 ? '▶ No sentido' : '◀ Contra', END_MODES[a.endMode]],
+      cellRow(ab, [dot, a.name, tl ? tl.name : 'solto', `${fmt(a.speed, 1)} m/min`, a.dir > 0 ? '▶ No sentido' : '◀ Contra', a.priority ? '★ Sim' : '—', END_MODES[a.endMode]],
         () => { sel = { kind: 'agv', id: a.id }; renderPanel(); requestDraw(); });
     });
   }
 
-  function renderCollisions() {
+  /** Relatório do horizonte: colisões e, por AGV, as paradas pelo sensor, as esperas por prioridade e os travamentos. */
+  function renderReport() {
+    const r = run;
+    if (!r || !r.finished) return;
+    const days = `${ac().days} dia${ac().days > 1 ? 's' : ''}`;
+    const stuck = r.stats.filter((s, i) => s.reason && s.cur >= STUCK_S && world.units[i].gm);
+    const nCol = r.collisions.length;
+    const parts = [];
+    if (nCol) parts.push(`${r.truncated ? `${T.MAX_EVENTS}+` : nCol} colisão(ões)`);
+    if (stuck.length) parts.push(`${stuck.length} travado(s)`);
+    const badge = $('agvCollisionBadge');
+    badge.textContent = parts.length ? `⚠ ${parts.join(' · ')} em ${days}` : `✓ Sem colisões nem travamentos em ${days}`;
+    badge.classList.toggle('badge-red', parts.length > 0);
+    badge.classList.toggle('badge-saved', !parts.length);
+    const name = id => (agv(id) || { name: '?' }).name;
+    const goTo = (t, x, y) => {
+      setPlaying(false);
+      setTime(t);
+      if (x !== undefined) {
+        view().cx = x;
+        view().cy = y;
+        view().zoom = Math.max(view().zoom, 25);
+      }
+      requestDraw();
+    };
+
     const tb = $('agvCollisionBody');
     tb.innerHTML = '';
-    const days = `${ac().days} dia${ac().days > 1 ? 's' : ''}`;
-    const badge = $('agvCollisionBadge');
-    const count = collisions.length >= MAX_EVENTS ? `${MAX_EVENTS}+` : String(collisions.length);
-    badge.textContent = collisions.length ? `⚠ ${count} colisão(ões) em ${days}` : `✓ Sem colisões em ${days}`;
-    badge.classList.toggle('badge-red', collisions.length > 0);
-    badge.classList.toggle('badge-saved', !collisions.length);
-    if (!collisions.length) { emptyRow(tb, 5, ac().agvs.length > 1 ? 'Nenhuma colisão no horizonte analisado.' : 'Coloque pelo menos dois AGVs para analisar colisões.'); return; }
-    collisions.forEach(c => {
-      const A = agv(c.a), B = agv(c.b);
-      cellRow(tb, [`${A ? A.name : '?'} × ${B ? B.name : '?'}`, fmtTime(c.t0), `${fmt(c.t1 - c.t0 + SIM_DT, 1)} s`, `x ${fmt(c.x, 1)} m · y ${fmt(c.y, 1)} m`, '▶ ver'],
-        () => {
-          setPlaying(false);
-          setTime(c.t0);
-          view().cx = c.x;
-          view().cy = c.y;
-          view().zoom = Math.max(view().zoom, 25);
-          requestDraw();
-        });
+    if (!nCol) emptyRow(tb, 5, ac().agvs.length > 1 ? 'Nenhuma colisão no horizonte analisado.' : 'Coloque pelo menos dois AGVs para analisar colisões.');
+    r.collisions.forEach(c => {
+      cellRow(tb, [`${name(c.a)} × ${name(c.b)}`, fmtTime(c.t0), `${fmt(c.t1 - c.t0 + T.DT, 1)} s`, `x ${fmt(c.x, 1)} m · y ${fmt(c.y, 1)} m`, '▶ ver'],
+        () => goTo(c.t0, c.x, c.y));
+    });
+
+    const wb = $('agvWaitBody');
+    wb.innerHTML = '';
+    if (!ac().agvs.length) emptyRow(wb, 6, 'Nenhum AGV.');
+    ac().agvs.forEach((a, i) => {
+      const s = r.stats[i], u = world.units[i];
+      if (!s || !u) return;
+      let end = 'Andando';
+      if (!u.gm) end = 'Solto (não anda)';
+      else if (s.reason && s.cur >= STUCK_S) {
+        const why = s.reason === 1 ? `sensor: ${name(world.units[s.by].id)} à frente` : `esperando ${name(world.units[s.by].id)} (prioridade)`;
+        end = `⛔ Travado desde ${fmtTime(s.since)} (${why})`;
+      } else if (r.st.done[i]) end = 'Parado no fim do trilho';
+      else if (s.reason) end = s.reason === 1 ? '⏸ Parado pelo sensor' : '⏸ Esperando prioridade';
+      cellRow(wb, [`${a.priority ? '★ ' : ''}${a.name}`, String(s.sensorStops), fmtDur(s.sensorTime), String(s.prioStops), fmtDur(s.prioTime), end], () => {
+        sel = { kind: 'agv', id: a.id };
+        renderPanel();
+        if (s.reason && s.cur >= STUCK_S) goTo(s.since);
+        else requestDraw();
+      });
     });
   }
 
@@ -6066,11 +6523,11 @@ const AgvFlow = (() => {
     $('agvDuration').value = String(ac().days);
     $('agvScrubber').max = String(horizonS());
     if (routeEdit !== null && !trilho(routeEdit)) routeEdit = null;
-    geomCache = new Map();
+    resetGeom();
+    lastSimKey = simKey();
+    resetSim();
     setTool(routeEdit !== null ? 'route' : (tool === 'route' ? 'select' : tool));
     renderLists();
-    scheduleAnalysis();
-    requestDraw();
   }
 
   /* ── Inicialização ────────────────────────────────────────────────────── */
@@ -6307,6 +6764,7 @@ function mergeAgvConfig(t, c) {
       dir: Number(a.dir) < 0 ? -1 : 1,
       endMode: ['stop', 'pingpong', 'loop'].includes(a.endMode) ? a.endMode : 'stop',
       delay: Math.max(0, num(a.delay, 0)),
+      priority: !!a.priority,
       x: num(a.x, 0), y: num(a.y, 0), angle: num(a.angle, 0)
     }));
   }

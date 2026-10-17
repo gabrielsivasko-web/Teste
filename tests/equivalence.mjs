@@ -1065,8 +1065,8 @@ async function agvCheck(browser) {
   for (let i = 0; i <= 30; i++) await page.mouse.move(...at(-400 + i * 25, 200 + Math.sin(i / 4) * 40));
   await page.mouse.up();
   let tl = await trilhos();
-  expect(tl[2] === '4|280,0 m|Circuito|0', `circuito de 4 linhas: ${tl[2]}`);
-  expect(tl.length === 4 && tl[3].endsWith('|Aberto|0'), `traço do lápis: ${tl[3]}`);
+  expect(tl[2] === '4|280,0 m|Circuito|—', `circuito de 4 linhas: ${tl[2]}`);
+  expect(tl.length === 4 && tl[3].endsWith('|Aberto|—'), `traço do lápis: ${tl[3]}`);
   const pencilPts = (await cfgNow()).trechos.at(-1);
   expect(pencilPts.kind === 'path' && pencilPts.pts.length < 31, `lápis suavizado: ${pencilPts.kind}, ${pencilPts.pts.length} pontos`);
 
@@ -1088,25 +1088,29 @@ async function agvCheck(browser) {
   await page.mouse.click(...at(0, 120));
   await set('Comprimento (m)', 25);
   tl = await trilhos();
-  expect(tl[2] === '4|130,0 m|Circuito|2', `trecho de 25 m: ${tl[2]}`);
+  expect(tl[2] === '4|130,0 m|Circuito|AGV 1, AGV 2', `trecho de 25 m: ${tl[2]}`);
   net = await cfgNow();
   const square = net.trechos.slice(2, 6).every(t => Math.abs(t.pts[0][0] - t.pts[1][0]) < 1e-6 || Math.abs(t.pts[0][1] - t.pts[1][1]) < 1e-6);
   expect(square, 'o circuito deveria continuar com lados retos (retângulo)');
-  await page.waitForFunction(() => !document.getElementById('agvCollisionBadge').textContent.startsWith('Analisando') && document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 15000 }).catch(() => {});
-  const nCol = await page.evaluate(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length);
-  expect(nCol >= 1, `AGVs em sentidos opostos no circuito devem colidir: ${nCol}`);
+  // frente a frente no circuito: o sensor (1 m à frente) para os dois — sem colisão, travados
+  const reportReady = () => page.waitForFunction(() => !document.getElementById('agvCollisionBadge').textContent.startsWith('Analisando'), null, { timeout: 30000 });
+  const waits = () => page.evaluate(() => Array.from(document.querySelectorAll('#agvWaitBody tr')).map(tr => tr.innerText.replace(/\t/g, '|')));
+  await reportReady();
+  const report = await waits();
+  expect(report.length === 2 && report.every(r => r.includes('Travado')), `AGVs frente a frente devem parar pelo sensor: ${report}`);
+  expect(await page.evaluate(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length) === 0, 'o sensor deveria evitar a colisão frente a frente');
 
   // desvio: linha saindo do meio do lado de cima (x 25…50 m) e caminho do trilho novo passando pelo circuito
   await tool('line');
   await stroke([240, -120], [240, -220]);
   tl = await trilhos();
-  expect(tl.length === 5 && tl[2].startsWith('5|130,0 m|Circuito') && tl[4] === '1|16,7 m|Aberto|0', `desvio: ${tl}`);
+  expect(tl.length === 5 && tl[2].startsWith('5|130,0 m|Circuito') && tl[4] === '1|16,7 m|Aberto|—', `desvio: ${tl}`);
   await page.locator('#agvTrilhoBody tr:last-child button:has-text("✎")').click();
   await refresh();
   await page.mouse.click(...at(280, -120));
   await page.keyboard.press('Enter');
   tl = await trilhos();
-  expect(tl[4] === '2|26,7 m|Aberto|0', `caminho do desvio pelo circuito: ${tl[4]}`);
+  expect(tl[4] === '2|26,7 m|Aberto|—', `caminho do desvio pelo circuito: ${tl[4]}`);
 
   // mover: a ponta solta do desvio vai 10 m para a direita
   await tool('move');
@@ -1124,13 +1128,42 @@ async function agvCheck(browser) {
   const zoom = await page.evaluate(() => document.getElementById('agvZoomBadge').textContent);
   expect(!zoom.includes('zoom 6,0'), `zoom com a roda: ${zoom}`);
 
+  await reportReady();
+  const reportBefore = await waits();
   await page.reload();
   await page.selectOption('#appViewSelect', 'agv');
-  await page.waitForFunction(() => !document.getElementById('agvCollisionBadge').textContent.startsWith('Analisando') && document.querySelectorAll('#agvCollisionBody tr.clickable').length > 0, null, { timeout: 15000 }).catch(() => {});
-  expect(await page.evaluate(() => document.querySelectorAll('#agvCollisionBody tr.clickable').length) === nCol, 'colisões após recarregar');
+  await reportReady();
+  expect(JSON.stringify(await waits()) === JSON.stringify(reportBefore), `relatório após recarregar: ${await waits()} × ${reportBefore}`);
   expect(JSON.stringify(await trilhos()) === JSON.stringify(tl), `após recarregar: ${await trilhos()}`);
   expect(!errors.length, `erros: ${errors.join('; ')}`);
   await ctx.close();
+
+  // duas rotas que dividem um trecho (Y duplo) e chegam juntas: sem prioridade batem na junção; com prioridade o
+  // AGV 2 espera o AGV 1 passar
+  const N = { 1: [0, -15], 2: [15, 0], 3: [45, 0], 4: [60, -15], 5: [0, 15], 6: [60, 15] };
+  const line = (id, a, b) => ({ id, kind: 'line', pts: [N[a], N[b]], a, b, len: null });
+  const shared = prio => ({ agvCfg: {
+    nodes: Object.entries(N).map(([id, [x, y]]) => ({ id: Number(id), x, y })),
+    trechos: [line(11, 1, 2), line(12, 2, 3), line(13, 3, 4), line(14, 5, 2), line(15, 3, 6)],
+    trilhos: [{ id: 21, name: 'Rota 1', color: '#38bdf8', trechos: [11, 12, 13] }, { id: 22, name: 'Rota 2', color: '#f59e0b', trechos: [14, 12, 15] }],
+    agvs: [{ id: 31, name: 'AGV 1', trilhoId: 21, s0: 0, speed: 30, dir: 1, endMode: 'pingpong', priority: prio },
+           { id: 32, name: 'AGV 2', trilhoId: 22, s0: 0, speed: 30, dir: 1, endMode: 'pingpong' }],
+    view: { cx: 30, cy: 0, zoom: 12 }, days: 1, nextId: 50 } });
+  for (const prio of [false, true]) {
+    const o = await openPlain(browser, NEW_FILE, shared(prio));
+    await o.page.selectOption('#appViewSelect', 'agv');
+    await o.page.waitForFunction(() => !document.getElementById('agvCollisionBadge').textContent.startsWith('Analisando'), null, { timeout: 30000 });
+    const r = await o.page.evaluate(() => ({
+      badge: document.getElementById('agvCollisionBadge').textContent,
+      share: document.querySelector('#agvTrilhoBody tr td:nth-child(7)').textContent,
+      agv2: document.querySelector('#agvWaitBody tr:nth-child(2)').innerText.split('\t')
+    }));
+    expect(r.share === 'Rota 2 (comum)', `trecho em comum entre as rotas: ${r.share}`);
+    if (prio) expect(r.badge.startsWith('✓') && Number(r.agv2[3]) > 0, `com prioridade o AGV 2 deveria esperar e não colidir: ${r.badge} / ${r.agv2}`);
+    else expect(r.badge.includes('colisão'), `sem prioridade deveriam se encontrar na junção: ${r.badge}`);
+    expect(!o.errors.length, `erros: ${o.errors.join('; ')}`);
+    await o.ctx.close();
+  }
   return problems;
 }
 
@@ -1222,7 +1255,7 @@ try {
     checks++;
     const problems = await agvCheck(browser);
     problems.forEach(pb => fail('agv', pb));
-    log(`  ${problems.length ? '·' : '✔'} Página Fluxo de AGVs (desenho, comprimentos em escala, desvios, caminhos, mover, AGVs, colisões, memória)`);
+    log(`  ${problems.length ? '·' : '✔'} Página Fluxo de AGVs (desenho em escala, desvios, caminhos, mover, AGVs, sensor, prioridade, relatório, memória)`);
   }
 
   log('Cenários roteirizados');

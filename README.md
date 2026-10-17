@@ -115,25 +115,36 @@ móvel (arrastar o fundo ou ✋ Vista). **O desenho é sempre em escala.**
 - **Ligações e desvios:** começar ou terminar um traço numa ponta (○) continua o trilho; ligar o fim ao começo fecha o
   **circuito**; ligar as pontas de dois trilhos une os dois. Começar ou terminar **no meio de um trecho** (◇) cria um
   **desvio**: o trecho é dividido ali e o traço novo vira um trilho. Trilhos podem só se cruzar, sem ligação.
-- **Caminho dos trilhos:** cada trilho tem uma cor e é o caminho que os seus AGVs seguem. Trilhos podem dividir
-  trechos: em ✎ Caminho (tabela ou painel do trilho) clica-se nos trechos para acrescentar numa ponta ou tirar da ponta
-  — assim um trilho entra num desvio e volta para o circuito. ➕ Novo trilho monta um caminho do zero; ⇄ Inverter
-  sentido troca o sentido do trilho. Num trecho dividido, as cores aparecem lado a lado.
+- **Caminho dos trilhos (rotas):** cada trilho tem uma cor e é o caminho que os seus AGVs seguem. Trilhos podem
+  dividir trechos. Em ✎ Caminho (tabela ou painel do trilho) basta clicar num trecho qualquer: o caminho vai até ele
+  pelo trajeto mais curto da rede (clicar no trecho de uma ponta tira). ➕ Novo trilho monta um caminho do zero
+  (clique no primeiro e no último trecho); ⇄ Inverter sentido troca o sentido. Num trecho dividido, as cores aparecem
+  lado a lado.
+- **Quem passa por onde:** no painel do **trilho**, marca-se quais AGVs andam nele; no painel do **trecho**, quais
+  trilhos passam ali (marcar leva o caminho daquele trilho até o trecho) e quais AGVs passam por ele. A tabela de
+  trilhos mostra os AGVs de cada um e com quais outros trilhos ele **divide trechos** ou **se cruza**.
 - **✥ Mover trilho:** arrastar uma ponta (□) a reposiciona — solta sobre outra ponta ou trecho, liga; arrastar um
   trecho move o trilho inteiro com o que está ligado nele.
 - **AGV (0,80 × 1,50 m, comprido no trilho):** clicado sobre um trilho, prende-se a ele e só anda sobre o caminho; a
   ferramenta volta para Selecionar (Shift+clique coloca vários). Clicando nele: velocidade (m/min), sentido (no sentido
   do trilho ou contra), posição inicial, partida (s) e comportamento no fim do trilho (para, vai e volta, recomeça).
   Gira acompanhando o trilho com o eixo no meio do AGV; ao editar a rede, continua no mesmo ponto do seu trecho.
+- **Sensor de proximidade (todos os AGVs):** enxerga 1 m à frente, na largura do AGV; se houver outro AGV ali, para e
+  espera (no desenho: faixa à frente do AGV, amarela quando detecta; contorno amarelo "⏸ sensor").
+- **Prioridade (só os marcados ★):** nos cruzamentos e trechos em comum com o trilho de um AGV com prioridade, o AGV
+  sem prioridade espera antes de entrar enquanto o prioritário estiver na zona ou chegando a tempo de encontrá-lo
+  (contorno lilás "⏸ prioridade"). As zonas são calculadas pela geometria dos trilhos (onde os AGVs podem se encostar).
 - **Fluxo contínuo:** ▶ Simular anima os AGVs sem reiniciar — cada um segue a sua regra (circuito, vai e volta ou para
   no fim) indefinidamente. O tempo aparece como "Dia N · hh:mm:ss", com **dia de 18 h**; velocidades de 1x a 1800x.
-- **Relatório de colisões:** vale só para o **horizonte do relatório (em dias)**. Os AGVs são simulados nesse período
-  (passo de 0,1 s; cada par só é testado quando pode se encostar, então vários dias levam poucos segundos) e cada
-  contato entre dois AGVs é listado com dia/hora, duração e local; clicar leva ao momento da colisão. No desenho, um
-  AGV fica vermelho sempre que encosta em outro, mesmo depois do horizonte.
+- **Relatório:** vale só para o **horizonte do relatório (em dias)**. Os AGVs são simulados nesse período, passo a
+  passo (0,1 s), com o sensor e a prioridade, em segundo plano. Lista cada **colisão** (dia/hora, duração, local) e,
+  por AGV, as **paradas pelo sensor**, as **esperas por prioridade**, os tempos parados e a situação no fim — inclusive
+  **travamentos** (parado esperando há mais de 1 min, ex.: dois AGVs frente a frente). Clicar leva ao momento. No
+  desenho, um AGV fica vermelho sempre que encosta em outro, mesmo depois do horizonte.
 - ↶ Desfazer / Ctrl+Z, Delete apaga o selecionado, Esc cancela. Tudo fica salvo no PC e no `.json` (`agvCfg`).
 
-No código, `AgvModel` é a rede (nós, trechos, trilhos e as operações de edição, sem DOM) e `AgvFlow` a página.
+No código, `AgvModel` é a rede (nós, trechos, trilhos e as operações de edição), `AgvTraffic` a simulação do tráfego
+(sensor, prioridade, zonas de conflito, relatório) — ambos sem DOM — e `AgvFlow` a página.
 Arquivos da versão anterior abrem convertidos: o "representa X m" vira o comprimento do desenho.
 
 ## Observação sobre a proteção
