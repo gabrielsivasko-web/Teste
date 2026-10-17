@@ -80,6 +80,27 @@ node tests/equivalence.mjs --only=passes --fuzz=0   # um cenário
 - **Seletor do carro em configuração** no lugar dos três botões, e **"⧉ Replicar configuração de"**: copia os trechos
   (posições, velocidades, alturas e paradas) de outro carro para o que está sendo configurado.
 
+## Página Engajamento
+
+O título do cabeçalho é um seletor: **Telemetria ME1** ou **Engajamento**. A página Engajamento mostra um carro
+estático, vista de cima, frente à direita, com qualquer especificação cadastrada (XDF/X62 · L2/L3/L4) e um seletor de
+passe (1º a 4º). Para cada passe:
+
+- **Postos** — quantos quiser, posicionados livremente (arrastar, duplo clique no desenho ou ➕ Adicionar Posto). As
+  posições são medidas a partir da frente do carro e do eixo (lateral + = lado esquerdo, − = lado direito).
+- **Planilha de engajamento (.xlsx)** — uma aba por passe (o número no nome da aba indica o passe), 1ª linha de
+  cabeçalho, uma linha por FOP. Colunas reconhecidas pelo nome (sem acento/maiúsculas): **FOP**, **Torque** (Nm),
+  **Soquete**, **Apertos** e, opcionalmente, **Posto**, **Da frente** e **Lateral**; as demais colunas são guardadas e
+  exibidas como vieram. A lista fica em `ENG_SHEET_COLUMNS`, no código. A leitura do .xlsx é feita no próprio arquivo,
+  sem bibliotecas nem internet.
+- **FOPs na tela** — cada FOP vira uma bolinha com o número dela (➕ Na tela ou ➕ Adicionar todas), arrastada para o
+  local da operação no carro; ao passar o mouse aparece o quadro com torque, soquete, nº de apertos, posto e as demais
+  colunas.
+- **FOPs de cada posto** — cada posto inclui as FOPs que ele faz (na tabela de postos ou pelo seletor "Posto" da
+  planilha); a bolinha da FOP fica com a cor do posto. A coluna "Posto" da planilha já faz essa classificação.
+
+Tudo fica salvo no PC e vai junto no `.json` exportado (`engCfg`).
+
 ## Observação sobre a proteção
 
 A senha do download não fica mais em texto puro (agora é comparada por SHA-256), mas é uma barreira de uso casual:

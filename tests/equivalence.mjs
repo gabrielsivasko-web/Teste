@@ -8,6 +8,7 @@
 // Uso:  npm install && npm test          (ou: node tests/equivalence.mjs [--fuzz=N] [--only=nome] [--no-screens])
 import { chromium } from 'playwright';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,6 +89,19 @@ const REFERENCE_FIXES = [
   { find: "    if (typeof cfg.global.Hmax === 'number') state.global.Hmax = cfg.global.Hmax;\n  }",
     replace: "    if (typeof cfg.global.Hmax === 'number') state.global.Hmax = cfg.global.Hmax;\n    if (typeof cfg.global.E0 === 'number') state.global.E0 = cfg.global.E0;\n  }\n" +
       "  if (!(cfg.global && typeof cfg.global.E0 === 'number') && cfg.carsCfg) { const lg = ['C2', 'C3', 'C1'].map(k => cfg.carsCfg[k]).find(c => c && typeof c.E0 === 'number'); if (lg) state.global.E0 = lg.E0; }" },
+  { // E. Título vira seletor de página; telemetria e Engajamento em blocos separados (a página Engajamento,
+    //    exclusiva da versão nova, fica fora da comparação: data-eq-skip)
+    find: '        <h1 style="font-size:18px; letter-spacing:-0.01em;">Telemetria ME1</h1>',
+    replace: `        <h1 style="font-size:18px; letter-spacing:-0.01em;"><select class="title-select" id="appViewSelect" title="Trocar de página">
+          <option value="telemetria">Telemetria ME1</option>
+          <option value="engajamento">Engajamento</option>
+        </select></h1>` },
+  { find: '  .toast-msg.show { opacity: 1; display: inline; }',
+    replace: '  .toast-msg.show { opacity: 1; display: inline; }\n' + newSrc.split('\n').filter(l => l.startsWith('  .title-select')).join('\n') },
+  { find: '  <div class="top-controls-grid">', replace: '  <div id="telemetryTopControls">\n  <div class="top-controls-grid">' },
+  { find: '      <input type="range" id="rng_nC1" min="1" max="30" step="1" value="1">\n    </div>\n  </div>\n</div>\n\n<div class="card">',
+    replace: '      <input type="range" id="rng_nC1" min="1" max="30" step="1" value="1">\n    </div>\n  </div>\n  </div>\n</div>\n\n<div id="view_telemetria">\n<div class="card">' },
+  { find: '<div class="watermark-floating">', replace: '</div>\n\n<div class="watermark-floating">' },
   { // D. Seletor do carro em configuração + "Replicar configuração de"
     find: `      <button class="btn active" id="cfgTab_C2" onclick="event.stopPropagation(); setCfgTab('C2', true)">XDF (Atrás de XDF)</button>
       <button class="btn" id="cfgTab_C1" onclick="event.stopPropagation(); setCfgTab('C1', true)">X62</button>
@@ -155,8 +169,8 @@ const READ_INTERNALS = {
   new: `(() => { const r = __ME1__.getResults(); return {
     frames: r.frames, logsByProfile: r.logsByProfile, logsByCarIdx: r.logsByCarIdx, hourly: r.hourly,
     passByProfile: r.passByProfile, passByIdx: r.passByIdx,
-    playback: { ...__ME1__.playback }, ui: __ME1__.ui,
-    config: __ME1__.serialize().config
+    playback: { ...__ME1__.playback }, ui: (({ view, ...rest }) => rest)(__ME1__.ui),
+    config: (() => { const c = __ME1__.serialize().config; delete c.engCfg; return c; })()
   }; })()`
 };
 const SET_SIMTIME = {
@@ -330,14 +344,14 @@ class Session {
         return [td.innerText, cs.color, cs.fontWeight, b ? getComputedStyle(b).color : ''];
       })]);
       // Atributo "value" só dos campos fixos (com id): nos campos gerados a versão nova sempre grava o valor formatado
-      const fields = Array.from(document.querySelectorAll('input, select')).map(el => [el.id, el.type, el.value, el.id ? el.getAttribute('value') : '', el.min, el.max, el.step]);
+      const fields = Array.from(document.querySelectorAll('input, select')).filter(el => !el.closest('[data-eq-skip]')).map(el => [el.id, el.type, el.value, el.id ? el.getAttribute('value') : '', el.min, el.max, el.step]);
       return {
         scroll: `${window.scrollX},${window.scrollY}`,
         focus: document.activeElement ? `${document.activeElement.tagName}#${document.activeElement.id}` : '',
         text: document.body.innerText,
         tables: JSON.stringify([cells('#tableBody'), cells('#hourlyTableBody'), cells('#passBalanceBody')]),
         fields: JSON.stringify(fields),
-        titles: JSON.stringify(Array.from(document.querySelectorAll('[title]')).map(el => el.title)),
+        titles: JSON.stringify(Array.from(document.querySelectorAll('[title]')).filter(el => !el.closest('[data-eq-skip]')).map(el => el.title)),
         select: JSON.stringify(Array.from(document.querySelectorAll('#carSelectDropdown option')).map(o => [o.value, o.textContent, o.selected]))
       };
     }));
@@ -348,7 +362,7 @@ class Session {
     // 3) Estilo computado de todos os elementos (mesma árvore nas duas versões)
     if (styles) {
       const css = await this.both(p => p.evaluate(async () => {
-        const els = Array.from(document.body.querySelectorAll('*'));
+        const els = Array.from(document.body.querySelectorAll('*')).filter(el => !el.closest('[data-eq-skip]'));
         const rows = els.map(el => {
           const cs = getComputedStyle(el);
           const props = [];
@@ -398,6 +412,8 @@ class Session {
 
     // 6) Memória do PC
     const mem = await this.both(p => p.evaluate(k => localStorage.getItem(k), STORAGE_KEY));
+    mem.ref = withoutEngagement(mem.ref);
+    mem.new = withoutEngagement(mem.new);
     if (mem.ref !== mem.new) fail(tag, 'memória salva (localStorage) difere', firstDiff(mem.ref, mem.new));
 
     // 7) Erros de execução: devem ser os mesmos nas duas (ex.: memória corrompida quebra as duas do mesmo jeito)
@@ -481,6 +497,14 @@ class Session {
     }
     return [res.msg, ...where].join('\n');
   }
+}
+
+/** Remove os dados da página Engajamento (só existem na versão nova) de um .json salvo/exportado. */
+function withoutEngagement(text, indent) {
+  if (!text) return text;
+  const o = JSON.parse(text);
+  if (o && o.config) delete o.config.engCfg;
+  return JSON.stringify(o, null, indent);
 }
 
 function firstDiff(a, b) {
@@ -721,7 +745,8 @@ const SCENARIOS = {
     await s.click('#seq_ONLY_C2');
     const exported = await s.download('Exportar Parâmetros');
     if (exported.ref.name !== exported.new.name) fail(s.name, 'nome do .json exportado difere', `${exported.ref.name} | ${exported.new.name}`);
-    if (exported.ref.text !== exported.new.text) fail(s.name, '.json exportado difere', firstDiff(exported.ref.text, exported.new.text));
+    const expRef = withoutEngagement(exported.ref.text, 2), expNew = withoutEngagement(exported.new.text, 2);
+    if (expRef !== expNew) fail(s.name, '.json exportado difere', firstDiff(expRef, expNew));
     await s.checkpoint('exportado');
     await s.clickText('Restaurar Padrão');
     await s.checkpoint('padrão restaurado');
@@ -890,6 +915,104 @@ const BUG_CHECKS = {
   }
 };
 
+// ── Página Engajamento (só existe na versão nova) ──
+
+/** Monta um .xlsx mínimo (ZIP com os XMLs da planilha) — abas: [{ name, rows: [[...]] }]. */
+function buildXlsx(sheets) {
+  const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const col = j => String.fromCharCode(65 + j);
+  const sheetXml = rows => '<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+    rows.map((r, i) => `<row r="${i + 1}">` + r.map((v, j) => (typeof v === 'number'
+      ? `<c r="${col(j)}${i + 1}"><v>${v}</v></c>`
+      : `<c r="${col(j)}${i + 1}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`)).join('') + '</row>').join('') + '</sheetData></worksheet>';
+  const files = [
+    ['xl/workbook.xml', '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
+      sheets.map((sh, i) => `<sheet name="${esc(sh.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') + '</sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      sheets.map((sh, i) => `<Relationship Id="rId${i + 1}" Type="ws" Target="worksheets/sheet${i + 1}.xml"/>`).join('') + '</Relationships>'],
+    ...sheets.map((sh, i) => [`xl/worksheets/sheet${i + 1}.xml`, sheetXml(sh.rows)])
+  ];
+  const locals = [], centrals = [];
+  let offset = 0;
+  files.forEach(([name, text]) => {
+    const data = Buffer.from(text), comp = zlib.deflateRawSync(data), nameBuf = Buffer.from(name), crc = zlib.crc32(data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(8, 8); lh.writeUInt32LE(crc, 14);
+    lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(data.length, 22); lh.writeUInt16LE(nameBuf.length, 26);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(8, 10); ch.writeUInt32LE(crc, 16);
+    ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(data.length, 24); ch.writeUInt16LE(nameBuf.length, 28); ch.writeUInt32LE(offset, 42);
+    locals.push(lh, nameBuf, comp);
+    centrals.push(ch, nameBuf);
+    offset += 30 + nameBuf.length + comp.length;
+  });
+  const cd = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, end]);
+}
+
+/** Roteiro da página Engajamento: postos, planilha com FOPs, classificação por posto, quadro do mouse e memória. */
+async function engagementCheck(browser) {
+  const problems = [];
+  const expect = (cond, msg) => { if (!cond) problems.push(msg); };
+  const { page, ctx, errors } = await openPlain(browser, NEW_FILE);
+  await page.selectOption('#appViewSelect', 'engajamento');
+  const vis = await page.evaluate(() => ['view_telemetria', 'view_engajamento', 'telemetryTopControls'].map(id => document.getElementById(id).hidden));
+  expect(vis.join() === 'true,false,true', `troca de página: ${vis}`);
+
+  await page.locator('button', { hasText: 'Adicionar Posto' }).click();
+  const header = ['Nº FOP', 'Torque (Nm)', 'Soquete utilizado', 'Nº de apertos', 'Posto', 'Operação'];
+  const xlsx = buildXlsx([
+    { name: '1º Passe', rows: [header, [101, 45, '13 mm', 4, 'Posto LE', 'Fixar suporte'], [102, 25.5, '10 mm', 2, '', 'Chicote']] },
+    { name: 'Passe 3', rows: [header, [301, 90, '18 mm', 6, 'Posto Teto', 'Barra de teto']] }
+  ]);
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('button', { hasText: 'Importar Planilha' }).click()]);
+  await chooser.setFiles({ name: 'engajamento.xlsx', mimeType: 'application/octet-stream', buffer: xlsx });
+  await page.waitForFunction(() => document.getElementById('engSheetBadge').textContent.includes('engajamento.xlsx'));
+  const postosTxt = () => page.evaluate(() => Array.from(document.querySelectorAll('#engTableBody tr'))
+    .map(tr => `${tr.querySelector('.eng-name').value}:${Array.from(tr.querySelectorAll('.eng-chip')).map(c => c.textContent.replace(' ✕', '')).join('+')}`).join(' | '));
+  expect(await postosTxt() === 'Posto 1: | Posto LE:FOP 101', `postos após importar: ${await postosTxt()}`);
+
+  await page.locator('#engTableBody tr:nth-child(1) select').selectOption('102');   // FOP 102 no Posto 1
+  expect(await postosTxt() === 'Posto 1:FOP 102 | Posto LE:FOP 101', `incluir FOP no posto: ${await postosTxt()}`);
+  await page.locator('button', { hasText: 'Adicionar todas as FOPs' }).click();
+  const placed = await page.evaluate(() => document.querySelectorAll('#engSheetBody button.btn-mem-muted').length);
+  expect(placed === 2, `FOPs na tela: ${placed}`);
+
+  // Quadro da FOP 101 ao passar o mouse (procura a bolinha varrendo o carro)
+  const box = await page.locator('#engCanvas').boundingBox();
+  let tip = null;
+  for (let y = box.height * 0.3; y < box.height * 0.7 && !tip; y += 5) {
+    for (let x = box.width * 0.25; x < box.width * 0.75 && !tip; x += 5) {
+      await page.mouse.move(box.x + x, box.y + y);
+      const t = await page.evaluate(() => { const e = document.getElementById('engTip'); return e.hidden ? null : e.innerText; });
+      if (t && t.includes('FOP 101')) tip = t;
+    }
+  }
+  expect(tip && ['45 Nm', '13 mm', 'Nº de apertos', '4', 'Posto LE', 'Fixar suporte'].every(v => tip.includes(v)), `quadro da FOP: ${tip}`);
+  // arrasta a FOP e confere a nova posição salva
+  const before = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).config.engCfg.fops[1].find(f => f.fop === '101'), STORAGE_KEY);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 40, box.y + 40, { steps: 5 });
+  await page.mouse.up();
+  const after = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).config.engCfg.fops[1].find(f => f.fop === '101'), STORAGE_KEY);
+  expect(after && (after.x !== before.x || after.y !== before.y), `arrastar FOP: ${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+
+  await page.reload();
+  await page.selectOption('#appViewSelect', 'engajamento');
+  expect(await postosTxt() === 'Posto 1:FOP 102 | Posto LE:FOP 101', `após recarregar: ${await postosTxt()}`);
+  await page.selectOption('#engPassSelect', '3');
+  expect(await postosTxt() === 'Posto Teto:FOP 301', `3º passe: ${await postosTxt()}`);
+  await page.selectOption('#appViewSelect', 'telemetria');
+  const cv = await page.evaluate(() => { const c = document.getElementById('simCanvas'); return c.width > 0 && c.getBoundingClientRect().height >= 250; });
+  expect(cv, 'canvas da telemetria ao voltar');
+  expect(!errors.length, `erros: ${errors.join('; ')}`);
+  await ctx.close();
+  return problems;
+}
+
 // ── Configurações aleatórias (dentro dos limites dos sliders) ──
 function mulberry32(seed) {
   return () => {
@@ -965,6 +1088,13 @@ try {
       if (!after.ok) fail(name, 'bug continua na versão nova', after.info);
       log(`  ${!before.ok && after.ok ? '✔' : '·'} ${name} — v10: ${before.info} | nova: ${after.info}`);
     }
+  }
+
+  if (!ONLY || ONLY === 'engajamento') {
+    checks++;
+    const problems = await engagementCheck(browser);
+    problems.forEach(pb => fail('engajamento', pb));
+    log(`  ${problems.length ? '·' : '✔'} Página Engajamento (postos, planilha .xlsx, FOPs, quadro, memória)`);
   }
 
   log('Cenários roteirizados');

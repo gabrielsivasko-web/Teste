@@ -143,6 +143,26 @@
   .btn-mem-muted:hover { color: var(--text); border-color: var(--muted); }
   .toast-msg { font-size: 11px; font-family: monospace; color: var(--green); font-weight: 700; opacity: 0; display: none; transition: opacity 0.25s; }
   .toast-msg.show { opacity: 1; display: inline; }
+  /* Título que também troca a página (Telemetria ME1 / Engajamento) */
+  .title-select { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2360a5fa'/%3E%3C/svg%3E") no-repeat right 2px center; border: none; outline: none; appearance: none; padding: 0 18px 0 0; cursor: pointer; }
+  .title-select option { background: var(--card-inner); color: var(--text); font-size: 13px; }
+  /* Página Engajamento */
+  #engCanvas { height: 560px; touch-action: none; cursor: crosshair; }
+  .eng-stage { position: relative; }
+  .eng-tip { position: absolute; z-index: 10; min-width: 190px; max-width: 320px; pointer-events: none; background: rgba(15,19,28,0.96); border: 1px solid rgba(168,85,247,0.6); border-radius: 10px; padding: 8px 10px; box-shadow: 0 6px 18px rgba(0,0,0,0.5); font-size: 11px; }
+  .eng-tip-title { font-weight: 700; color: #d8b4fe; font-size: 12px; margin-bottom: 6px; font-family: monospace; }
+  .eng-tip dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+  .eng-tip dt { color: var(--muted); }
+  .eng-tip dd { color: var(--text); font-weight: 600; font-family: monospace; }
+  .eng-tip-sep { grid-column: 1 / -1; border-top: 1px dashed var(--border); margin: 3px 0; }
+  .eng-tip-pos { margin-top: 6px; color: var(--muted); font-family: monospace; font-size: 10px; }
+  .btn-fop { padding: 3px 8px; font-size: 10.5px; }
+  .eng-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .eng-chip { background: var(--card-inner); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 2px 7px; font-size: 10.5px; font-family: monospace; cursor: pointer; }
+  .eng-chip:hover { background: rgba(239,68,68,0.18); }
+  .eng-input { background: #0f131c; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: monospace; font-size: 11px; padding: 4px 6px; width: 90px; outline: none; }
+  .eng-input:focus { border-color: var(--accent-light); }
+  .eng-input.eng-name { width: 150px; }
 
   /* ═══════════════════════════════════════════════════════════════════════
    * 3. VARIANTES DE CARTÕES E BADGES
@@ -211,11 +231,14 @@
   <div class="top-header-bar">
     <div class="brand-block">
       <div class="cluster">
-        <h1 class="brand-title">Telemetria ME1</h1>
+        <h1 class="brand-title"><select class="title-select" id="appViewSelect" title="Trocar de página">
+          <option value="telemetria">Telemetria ME1</option>
+          <option value="engajamento">Engajamento</option>
+        </select></h1>
         <span class="badge badge-brand">XDF · X62</span>
         <span class="watermark-badge" title="Autoria e Propriedade Intelectual de Gabriel Ivasko">🛡️ Protegido por Criptografia</span>
       </div>
-      <span class="brand-sub">Simulação de Fluxo, Trechos Dinâmicos, Passes de Operação, Plataforma e Servant Sincronizada</span>
+      <span class="brand-sub" id="brandSub">Simulação de Fluxo, Trechos Dinâmicos, Passes de Operação, Plataforma e Servant Sincronizada</span>
     </div>
 
     <div class="btn-group gap-8">
@@ -258,6 +281,7 @@
     </div>
   </div>
 
+  <div id="telemetryTopControls">
   <div class="top-controls-grid">
     <div class="ctrl-group-box">
       <div class="section-label">Estudo de caso XDF - X62 — Modo de Sequência</div>
@@ -308,7 +332,10 @@
       <input type="range" id="rng_nC1" min="1" max="30" step="1" value="1">
     </div>
   </div>
+  </div>
 </div>
+
+<div id="view_telemetria">
 
 <!-- ═════════════════════════ SIMULAÇÃO (CANVAS) ═════════════════════════ -->
 <div class="card">
@@ -596,6 +623,74 @@
   </div>
 </div>
 
+</div>
+
+<!-- ═════════════════════════ PÁGINA ENGAJAMENTO ═════════════════════════ -->
+<div id="view_engajamento" data-eq-skip hidden>
+<div class="card">
+  <div class="row-between">
+    <span class="section-label m-0 text-accent">Engajamento — Postos por Passe (vista de cima · frente à direita)</span>
+    <div class="btn-group">
+      <span class="replicate-label">Carro:</span>
+      <select class="btn btn-select" id="engCarSelect" title="Especificação do carro (comprimentos e larguras cadastrados na Telemetria)"></select>
+      <span class="replicate-label">Passe:</span>
+      <select class="btn active btn-select" id="engPassSelect" title="Passe cujos postos estão sendo posicionados">
+        <option value="1">1º Passe</option>
+        <option value="2">2º Passe</option>
+        <option value="3">3º Passe</option>
+        <option value="4">4º Passe</option>
+      </select>
+    </div>
+  </div>
+  <div class="info-banner mt-10">
+    ℹ️ <b>Arraste</b> os postos e as <b>FOPs</b> (bolinhas com o nº da FOP) para posicioná-los livremente (passo de 0,05 m) — a posição da FOP é onde a operação é feita no carro e a cor é a do posto que a faz; <b>passe o mouse</b> sobre a FOP para ver torque, soquete e nº de apertos · <b>duplo clique</b> no desenho cria um posto ali (crie quantos quiser) · as posições são medidas a partir da <b>frente do carro</b> (à direita) e do <b>eixo</b> do carro: lateral positiva = lado esquerdo (LE, em cima), negativa = lado direito (LD, embaixo). Cada passe tem os seus postos.
+  </div>
+  <div class="eng-stage">
+    <canvas id="engCanvas"></canvas>
+    <div class="eng-tip" id="engTip" hidden></div>
+  </div>
+  <div class="row-between">
+    <span class="section-label m-0" id="engListTitle">Postos do 1º Passe</span>
+    <button class="btn-mem" data-action="engAddPosto" title="Adiciona um posto ao passe selecionado">➕ Adicionar Posto</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Nome do Posto</th>
+          <th>Da frente (m)</th>
+          <th>Lateral (m)</th>
+          <th>Lado</th>
+          <th>FOPs do posto</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="engTableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="row-between mt-10">
+    <div class="cluster">
+      <span class="section-label m-0 text-green" id="engSheetTitle">📄 Planilha de Engajamento — 1º Passe</span>
+      <span class="badge" id="engSheetBadge">Nenhuma planilha carregada</span>
+    </div>
+    <div class="btn-group">
+      <button class="btn-mem btn-mem-purple" data-action="engAddAllFops" title="Coloca na tela todas as FOPs deste passe que ainda não estão lá">➕ Adicionar todas as FOPs</button>
+      <button class="btn-mem btn-mem-blue" data-action="engImportSheet" title="Carrega a planilha (.xlsx) com uma aba por passe; a 1ª linha de cada aba é o cabeçalho das colunas">📥 Importar Planilha (.xlsx)</button>
+      <button class="btn-mem btn-mem-muted" data-action="engClearSheet" title="Remove os dados da planilha (postos e FOPs posicionados continuam)">✕ Remover Planilha</button>
+      <input type="file" id="engSheetInput" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead id="engSheetHead"></thead>
+      <tbody id="engSheetBody"></tbody>
+    </table>
+  </div>
+</div>
+</div>
+
 <div class="watermark-floating">🛡️ Telemetria ME1 • Autor: <b>Gabriel Ivasko</b></div>
 
 <script>
@@ -614,8 +709,9 @@
  *   7. Pós-processamento: telemetria compactada, produção hora a hora, balanço dos passes
  *   8. Interface: campos, painéis, tabelas e badges
  *   9. Renderizador do canvas e player da animação
- *  10. Persistência (memória do PC, exportar/importar, migração de formatos antigos)
- *  11. Ações (delegação de eventos dos botões), proteção e inicialização
+ *  10. Página Engajamento: carro estático (vista de cima) e postos de trabalho por passe
+ *  11. Persistência (memória do PC, exportar/importar, migração de formatos antigos)
+ *  12. Ações (delegação de eventos dos botões), proteção e inicialização
  */
 (() => {
 'use strict';
@@ -648,6 +744,21 @@ const PROFILE_NAMES = { C1: 'X62', C2: 'XDF←XDF', C3: 'XDF←X62', PLAT_XDF: '
 const MODEL_OF_PROFILE = { C1: 'X62', C2: 'XDF', C3: 'XDF' };   // C3 = XDF que entra logo atrás de um X62
 const MODELS = ['XDF', 'X62'];
 const LOG_TAB_KEYS = ['C1', 'C2', 'C3', 'PLAT_XDF'];
+const ENG_PASSES = [1, 2, 3, 4];   // passes da página Engajamento
+/**
+ * Colunas da planilha de engajamento que o sistema reconhece: o cabeçalho (sem acentos/maiúsculas/símbolos) precisa
+ * CONTER uma das palavras-chave. A ordem importa: cada coluna é usada uma vez só (ex.: "Torque de aperto" é torque,
+ * não nº de apertos). As demais colunas são guardadas e aparecem no quadro da FOP como vieram.
+ */
+const ENG_SHEET_COLUMNS = [
+  { key: 'fop', label: 'FOP', words: ['fop'] },
+  { key: 'torque', label: 'Torque', words: ['torque'], unit: 'Nm' },
+  { key: 'soquete', label: 'Soquete', words: ['soquete'] },
+  { key: 'apertos', label: 'Nº de apertos', words: ['aperto'] },
+  { key: 'posto', label: 'Posto', words: ['posto', 'estacao'] },     // posto que faz a FOP (cria o posto se não existir)
+  { key: 'x', label: 'Da frente', words: ['da frente'] },             // posição do posto a partir da frente (m)
+  { key: 'y', label: 'Lateral', words: ['lateral'] }                  // + LE / − LD (m)
+];
 const SEQ_MODES = ['C2_C1', 'ONLY_C2', 'ONLY_C1'];
 const PROFILE_KEYS = ['C2', 'C1', 'C3'];   // ordem do seletor "carro em configuração"
 const PROFILE_LABELS = { C2: 'XDF (Atrás de XDF)', C1: 'X62', C3: 'XDF (Atrás de X62)' };
@@ -781,6 +892,20 @@ function createDefaultConfig() {
       len: 1.80,
       XDF: { x0: 28.0, trigger_x: 18.0, v_to_p0: 200, car_wait_pos: 24.0, t_op: 60, t_move_pos: 30, v_move_pos: 150, v_retorno: 250 },
       X62: { x0: 28.0, x_start: 22.0, trigger_x: 18.0, v_to_p0: 200, car_wait_pos: 24.0, t_follow: 45, v_retorno: 250 }
+    },
+    // Página Engajamento: carro exibido, passe selecionado e postos de cada passe.
+    // Posto: x = distância da frente do carro rumo à traseira (m); y = lateral a partir do eixo (+ = LE, − = LD).
+    engCfg: {
+      carModel: 'XDF',
+      carSize: 'L3',
+      pass: 1,
+      postos: { 1: [], 2: [], 3: [], 4: [] },
+      // FOPs colocadas na tela: { id, fop (nº da planilha), x, y } — mesmas coordenadas dos postos
+      fops: { 1: [], 2: [], 3: [], 4: [] },
+      // Classificação: posto que faz cada FOP — { passe: { nº da FOP: id do posto } }
+      fopPostos: { 1: {}, 2: {}, 3: {}, 4: {} },
+      // Planilha importada: { fileName, importedAt, passes: { n: { sheet, columns: [...], rows: [[...]] } } }
+      sheet: null
     }
   };
 }
@@ -875,7 +1000,8 @@ const ui = {
   selectedLogKey: 'C3',
   tableMode: 'vehicle',
   hourlyBase: 'regime',
-  passRelease: false
+  passRelease: false,
+  view: 'telemetria'     // página exibida: 'telemetria' | 'engajamento'
 };
 
 /** Reprodução da animação (tempo em segundos de simulação). */
@@ -3324,14 +3450,871 @@ const Player = (() => {
         playback.simTime = playback.loopStart + ((playback.simTime - playback.loopStart) % span);
       }
     }
-    Renderer.draw();
+    if (ui.view === 'telemetria') Renderer.draw();
     requestAnimationFrame(loop);
   }
   return { start: () => requestAnimationFrame(loop) };
 })();
 
+
 /* ═══════════════════════════════════════════════════════════════════════════
- * 10. PERSISTÊNCIA (memória do PC, exportar / importar, migração de formatos antigos)
+ * 10. PÁGINA ENGAJAMENTO (carro estático, vista de cima, e postos por passe)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Leitor de planilhas .xlsx sem bibliotecas: o arquivo é um ZIP de XMLs. Descompacta com o DecompressionStream
+ * do próprio navegador e devolve as abas como matrizes de células (texto ou número).
+ * @returns {Promise<{name:string, rows:(string|number)[][]}[]>}
+ */
+const XlsxReader = (() => {
+  async function unzip(buffer, wanted) {
+    const view = new DataView(buffer);
+    const bytes = new Uint8Array(buffer);
+    let eocd = -1;
+    for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 65557); i--) {
+      if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('não é um arquivo .xlsx válido');
+    const count = view.getUint16(eocd + 10, true);
+    let ptr = view.getUint32(eocd + 16, true);
+    const files = new Map();
+    const decoder = new TextDecoder();
+    for (let n = 0; n < count; n++) {
+      if (view.getUint32(ptr, true) !== 0x02014b50) throw new Error('índice do .xlsx corrompido');
+      const method = view.getUint16(ptr + 10, true);
+      const size = view.getUint32(ptr + 20, true);
+      const nameLen = view.getUint16(ptr + 28, true);
+      const extraLen = view.getUint16(ptr + 30, true);
+      const commentLen = view.getUint16(ptr + 32, true);
+      const local = view.getUint32(ptr + 42, true);
+      const name = decoder.decode(bytes.subarray(ptr + 46, ptr + 46 + nameLen));
+      ptr += 46 + nameLen + extraLen + commentLen;
+      if (!wanted(name)) continue;
+      const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+      const raw = bytes.subarray(start, start + size);
+      if (method === 0) files.set(name, decoder.decode(raw));
+      else if (method === 8) {
+        const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+        files.set(name, await new Response(stream).text());
+      }
+    }
+    return files;
+  }
+
+  const parseXml = text => new DOMParser().parseFromString(text, 'application/xml');
+  const colIndex = ref => {
+    let n = 0;
+    for (const ch of ref.replace(/\d+/g, '')) n = n * 26 + (ch.charCodeAt(0) - 64);
+    return n - 1;
+  };
+  const textOf = el => Array.from(el.getElementsByTagName('t')).map(t => t.textContent).join('');
+
+  async function read(buffer) {
+    const files = await unzip(buffer, name => name.startsWith('xl/') && name.endsWith('.xml') || name.endsWith('.rels'));
+    const wb = files.get('xl/workbook.xml');
+    if (!wb) throw new Error('planilha sem pasta de trabalho');
+    const rels = parseXml(files.get('xl/_rels/workbook.xml.rels') || '<r/>');
+    const targets = {};
+    Array.from(rels.getElementsByTagName('Relationship')).forEach(r => {
+      const t = r.getAttribute('Target') || '';
+      targets[r.getAttribute('Id')] = t.startsWith('/') ? t.slice(1) : 'xl/' + t.replace(/^\.\//, '');
+    });
+    const shared = files.has('xl/sharedStrings.xml')
+      ? Array.from(parseXml(files.get('xl/sharedStrings.xml')).getElementsByTagName('si')).map(textOf)
+      : [];
+    return Array.from(parseXml(wb).getElementsByTagName('sheet')).map(sh => {
+      const xml = files.get(targets[sh.getAttribute('r:id')]);
+      const rows = [];
+      if (xml) {
+        Array.from(parseXml(xml).getElementsByTagName('row')).forEach(rowEl => {
+          const row = [];
+          Array.from(rowEl.getElementsByTagName('c')).forEach(c => {
+            const type = c.getAttribute('t');
+            const v = c.getElementsByTagName('v')[0];
+            let value = '';
+            if (type === 's') value = shared[Number(v && v.textContent)] ?? '';
+            else if (type === 'inlineStr') value = textOf(c);
+            else if (type === 'b') value = v && v.textContent === '1' ? 'VERDADEIRO' : 'FALSO';
+            else if (v) value = (type === 'str' || type === 'e') ? v.textContent : Number(v.textContent);
+            row[colIndex(c.getAttribute('r') || '')] = value;
+          });
+          const r = Number(rowEl.getAttribute('r')) - 1;
+          rows[Number.isFinite(r) && r >= 0 ? r : rows.length] = Array.from(row, x => x ?? '');
+        });
+      }
+      return { name: sh.getAttribute('name') || '', rows: Array.from(rows, r => r || []) };
+    });
+  }
+
+  return { read };
+})();
+
+/** Normaliza um cabeçalho para comparação (minúsculas, sem acentos e espaços extras). */
+const normHeader = h => String(h).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** Índice das colunas reconhecidas de uma aba: { fop: 0, torque: 2, … } (-1 = ausente). */
+function detectSheetColumns(columns) {
+  const used = new Set();
+  const out = {};
+  ENG_SHEET_COLUMNS.forEach(def => {
+    const i = columns.findIndex((c, idx) => !used.has(idx) && def.words.some(w => ` ${normHeader(c)} `.includes(` ${w}`)));
+    out[def.key] = i;
+    if (i >= 0) used.add(i);
+  });
+  return out;
+}
+
+/**
+ * Converte as abas lidas em dados por passe: o número no nome da aba indica o passe ("1º Passe", "Passe 2", "P3"…);
+ * abas sem número ocupam os passes livres na ordem. A 1ª linha preenchida é o cabeçalho.
+ */
+function sheetsToPasses(sheets) {
+  const passes = {};
+  const pending = [];
+  sheets.forEach(sh => {
+    const m = sh.name.match(/\d+/);
+    const n = m ? Number(m[0]) : NaN;
+    if (ENG_PASSES.includes(n) && !passes[n]) passes[n] = sh;
+    else pending.push(sh);
+  });
+  pending.forEach(sh => {
+    const free = ENG_PASSES.find(n => !passes[n]);
+    if (free) passes[free] = sh;
+  });
+  const out = {};
+  Object.entries(passes).forEach(([n, sh]) => {
+    const filled = sh.rows.filter(r => r.some(v => String(v).trim() !== ''));
+    if (!filled.length) return;
+    const [header, ...rows] = filled;
+    const width = Math.max(header.length, ...rows.map(r => r.length));
+    out[n] = {
+      sheet: sh.name,
+      columns: Array.from({ length: width }, (_, i) => String(header[i] ?? '').trim() || `Coluna ${i + 1}`),
+      rows: rows.map(r => Array.from({ length: width }, (_, i) => r[i] ?? ''))
+    };
+  });
+  return out;
+}
+
+/** Troca a página exibida (o título do cabeçalho é o seletor). */
+function setView(view) {
+  ui.view = view === 'engajamento' ? 'engajamento' : 'telemetria';
+  const isTelemetry = ui.view === 'telemetria';
+  $('appViewSelect').value = ui.view;
+  setHidden($('telemetryTopControls'), !isTelemetry);
+  setHidden($('view_telemetria'), !isTelemetry);
+  setHidden($('view_engajamento'), isTelemetry);
+  $('brandSub').textContent = isTelemetry
+    ? 'Simulação de Fluxo, Trechos Dinâmicos, Passes de Operação, Plataforma e Servant Sincronizada'
+    : 'Posicionamento dos Postos de Trabalho por Passe — Carro Estático, Vista de Cima';
+  if (isTelemetry) {
+    Renderer.fitHeight();   // o canvas da telemetria ficou oculto: mede de novo
+    Renderer.remeasure();
+  } else {
+    Engagement.render();
+  }
+}
+
+const Engagement = (() => {
+  const SNAP = 0.05;          // passo do arraste (m)
+  const MARGIN_X = 1.5;       // área livre à frente / atrás do carro (m)
+  const MARGIN_Y = 2.0;       // área livre de cada lado do carro (m), onde ficam os postos
+  const POSTO_R = 0.3;        // raio do marcador do posto (m)
+  const FOP_R = 0.2;          // raio da bolinha da FOP (m)
+  const FOP_COLOR = '#a855f7';                 // FOP sem posto
+  const POSTO_COLORS = ['#f59e0b', '#38bdf8', '#10b981', '#f472b6', '#facc15', '#fb923c', '#22d3ee', '#a3e635', '#e879f9', '#f87171'];
+  const CAR_COLORS = { XDF: ['rgba(0,176,80,0.32)', '#38bdf8'], X62: ['rgba(16,185,129,0.32)', '#92D050'] };
+  const INFO_KEYS = ['fop', 'torque', 'soquete', 'apertos', 'posto', 'x', 'y'];   // colunas com lugar próprio no quadro
+  let canvas = null, ctx = null, W = 0, H = 0;
+  let dragging = null;        // { item, dx, dy } enquanto arrasta (posto ou FOP)
+  let hover = null;           // { kind: 'posto' | 'fop', item }
+
+  const ec = () => config.engCfg;
+  const pass = () => ec().pass;
+  const postos = () => ec().postos[pass()] || (ec().postos[pass()] = []);
+  const fops = () => ec().fops[pass()] || (ec().fops[pass()] = []);
+  const fopPostoMap = () => ec().fopPostos[pass()] || (ec().fopPostos[pass()] = {});
+  const sheetData = () => (ec().sheet && ec().sheet.passes[pass()]) || null;
+  const carLen = () => config.lengths[ec().carModel][ec().carSize];
+  const carWidth = () => config.widths[ec().carModel];
+  const snap = v => Math.round(v / SNAP) * SNAP;
+  const fmt = v => (Math.abs(v) < 1e-9 ? 0 : v).toFixed(2);
+  const sideOf = y => (y > 1e-9 ? 'LE' : (y < -1e-9 ? 'LD' : 'Eixo'));
+  const cellText = v => (typeof v === 'number' ? String(Math.round(v * 1e6) / 1e6) : String(v ?? '').trim());
+  const postoColor = pt => POSTO_COLORS[Math.max(0, postos().indexOf(pt)) % POSTO_COLORS.length];
+  const postoById = id => postos().find(p => p.id === id) || null;
+  const fopPosto = key => postoById(fopPostoMap()[key]);
+
+  /** Linha da planilha de cada FOP do passe atual (chave = nº da FOP como texto). */
+  function fopRows() {
+    const data = sheetData();
+    const map = new Map();
+    if (!data) return map;
+    const col = detectSheetColumns(data.columns);
+    if (col.fop < 0) return map;
+    data.rows.forEach(r => {
+      const key = cellText(r[col.fop]);
+      if (key && !map.has(key)) map.set(key, r);
+    });
+    return map;
+  }
+
+  /** Escala e origem: carro centralizado, proporção real (mesma escala nos dois eixos). */
+  function geometry() {
+    const L = carLen(), Wc = carWidth(), pad = 24;
+    const scale = Math.min((W - 2 * pad) / (L + 2 * MARGIN_X), (H - 2 * pad) / (Wc + 2 * MARGIN_Y));
+    const frontPx = W / 2 + (L / 2) * scale;
+    const midY = H / 2;
+    return {
+      L, Wc, scale,
+      toPx: (x, y) => [frontPx - x * scale, midY - y * scale],
+      toM: (px, py) => [(frontPx - px) / scale, (midY - py) / scale]
+    };
+  }
+
+  function measure() {
+    const dpr = window.devicePixelRatio || 1;
+    const r = canvas.getBoundingClientRect();
+    W = r.width;
+    H = r.height;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  /* ── Desenho ──────────────────────────────────────────────────────────── */
+
+  function drawGrid(gm) {
+    const { toPx } = gm;
+    const [xMinM] = gm.toM(W, 0), [xMaxM] = gm.toM(0, 0);
+    const [, yTopM] = gm.toM(0, 0), [, yBotM] = gm.toM(0, H);
+    ctx.lineWidth = 1;
+    ctx.font = '10px monospace';
+    for (let x = Math.ceil(xMinM / 0.5) * 0.5; x <= xMaxM; x += 0.5) {
+      const [px] = toPx(x, 0);
+      const major = Math.abs(x - Math.round(x)) < 1e-6;
+      ctx.strokeStyle = major ? '#22293a' : 'rgba(34,41,58,0.45)';
+      ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
+      if (major) {
+        ctx.fillStyle = '#8b95a9';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${Math.round(x)}m`, px, H - 8);
+      }
+    }
+    for (let y = Math.ceil(yBotM / 0.5) * 0.5; y <= yTopM; y += 0.5) {
+      const [, py] = toPx(0, y);
+      const major = Math.abs(y - Math.round(y)) < 1e-6;
+      ctx.strokeStyle = major ? '#22293a' : 'rgba(34,41,58,0.45)';
+      ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(W, py); ctx.stroke();
+      if (major && Math.round(y) !== 0 && py > 30) {   // o topo fica livre para o título do passe
+        ctx.fillStyle = '#8b95a9';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${y > 0 ? 'LE' : 'LD'} ${Math.abs(Math.round(y))}m`, 6, py - 3);
+      }
+    }
+    // Eixo do carro e linha da frente
+    const [fx, axisY] = toPx(0, 0);
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = 'rgba(148,163,184,0.45)';
+    ctx.beginPath(); ctx.moveTo(0, axisY); ctx.lineTo(W, axisY); ctx.stroke();
+    ctx.strokeStyle = 'rgba(56,189,248,0.6)';
+    ctx.beginPath(); ctx.moveTo(fx, 0); ctx.lineTo(fx, H); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#38bdf8';
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('0 m = frente', fx + 4, 14);
+  }
+
+  /** Carro estático, vista de cima, frente à direita. */
+  function drawCar(gm) {
+    const { L, Wc, scale, toPx } = gm;
+    const [x1, y1] = toPx(L, Wc / 2), [x2, y2] = toPx(0, -Wc / 2);
+    const axisY = (y1 + y2) / 2;
+    const [fill, stroke] = CAR_COLORS[ec().carModel] || CAR_COLORS.XDF;
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(x1, y1, x2 - x1, y2 - y1, Math.min(14, 0.3 * scale)); ctx.fill(); ctx.stroke();
+    const ah = Math.min(18, (y2 - y1) * 0.3);   // seta da frente
+    ctx.fillStyle = stroke;
+    ctx.beginPath(); ctx.moveTo(x2 - 6, axisY); ctx.lineTo(x2 - 6 - ah, axisY - ah / 1.4); ctx.lineTo(x2 - 6 - ah, axisY + ah / 1.4); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#f1f5f9';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${ec().carModel} · ${ec().carSize} — ${L.toFixed(2)} m × ${Wc.toFixed(2)} m`, (x1 + x2) / 2, axisY + 4);
+    ctx.font = 'bold 10px monospace';
+    ctx.fillStyle = '#cbd5e1';
+    ctx.textAlign = 'right';
+    ctx.fillText('FRENTE ▶', x2 - 10 - ah, y1 + 14);
+    ctx.textAlign = 'left';
+    ctx.fillText('◀ TRASEIRA', x1 + 8, y1 + 14);
+    ctx.fillStyle = '#8b95a9';
+    ctx.textAlign = 'center';
+    ctx.fillText('LADO ESQUERDO (LE)', (x1 + x2) / 2, y1 - 8);
+    ctx.fillText('LADO DIREITO (LD)', (x1 + x2) / 2, y2 + 16);
+  }
+
+  const isActive = item => (dragging && dragging.item === item) || (hover && hover.item === item);
+
+  function drawPostos(gm) {
+    const r = Math.max(10, POSTO_R * gm.scale);
+    postos().forEach((pt, i) => {
+      const [px, py] = gm.toPx(pt.x, pt.y);
+      const active = isActive(pt);
+      ctx.fillStyle = postoColor(pt);
+      ctx.strokeStyle = active ? '#ffffff' : 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = active ? 3 : 2;
+      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#0b0d12';
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(i + 1), px, py + 4);
+      ctx.fillStyle = '#f1f5f9';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(pt.name, px, py + r + 13);
+      if (active) {
+        ctx.fillStyle = '#7dd3fc';
+        ctx.font = '10px monospace';
+        ctx.fillText(`${fmt(pt.x)} m da frente · ${sideOf(pt.y)} ${fmt(Math.abs(pt.y))} m`, px, py - r - 6);
+      }
+    });
+  }
+
+  /** Bolinha da FOP: nº da FOP dentro, cor do posto em que foi classificada (roxa sem posto). */
+  function fopShape(gm, f) {
+    const [px, py] = gm.toPx(f.x, f.y);
+    const r = Math.max(9, FOP_R * gm.scale);
+    ctx.font = 'bold 10px monospace';
+    const w = Math.max(2 * r, ctx.measureText(f.fop).width + 10);
+    return { px, py, r, w };
+  }
+
+  function drawFops(gm) {
+    fops().forEach(f => {
+      const { px, py, r, w } = fopShape(gm, f);
+      const posto = fopPosto(f.fop);
+      const active = isActive(f);
+      ctx.fillStyle = posto ? postoColor(posto) : FOP_COLOR;
+      ctx.strokeStyle = active ? '#ffffff' : 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = active ? 2.5 : 1.5;
+      ctx.beginPath(); ctx.roundRect(px - w / 2, py - r, w, 2 * r, r); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = posto ? '#0b0d12' : '#ffffff';
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(f.fop, px, py + 3.5);
+    });
+  }
+
+  function draw() {
+    if (!canvas || ui.view !== 'engajamento') return;
+    measure();
+    if (!W || !H) return;
+    const gm = geometry();
+    ctx.clearRect(0, 0, W, H);
+    drawGrid(gm);
+    drawCar(gm);
+    drawPostos(gm);
+    drawFops(gm);
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${pass()}º Passe · ${postos().length} posto(s) · ${fops().length} FOP(s) na tela`, 8, 16);
+  }
+
+  /* ── Quadro da FOP (ao passar o mouse) ────────────────────────────────── */
+
+  function showTip(f, px, py) {
+    const tip = $('engTip');
+    const row = fopRows().get(f.fop);
+    const data = sheetData();
+    const col = data ? detectSheetColumns(data.columns) : {};
+    const posto = fopPosto(f.fop);
+    tip.replaceChildren();
+    const title = document.createElement('div');
+    title.className = 'eng-tip-title';
+    title.textContent = `FOP ${f.fop}`;
+    const dl = document.createElement('dl');
+    const add = (label, value) => {
+      const dt = document.createElement('dt');
+      const dd = document.createElement('dd');
+      dt.textContent = label;
+      dd.textContent = value === '' ? '—' : value;
+      dl.append(dt, dd);
+    };
+    if (row) {
+      ENG_SHEET_COLUMNS.filter(d => ['torque', 'soquete', 'apertos'].includes(d.key)).forEach(d => {
+        const v = col[d.key] >= 0 ? cellText(row[col[d.key]]) : '';
+        add(d.label, v && d.unit && !v.toLowerCase().includes(d.unit.toLowerCase()) ? `${v} ${d.unit}` : v);
+      });
+    }
+    add('Posto', posto ? posto.name : (row && col.posto >= 0 ? cellText(row[col.posto]) : ''));
+    if (row) {
+      const used = new Set(INFO_KEYS.map(k => col[k]).filter(i => i >= 0));
+      const extra = data.columns.map((c, i) => [c, i]).filter(([, i]) => !used.has(i) && cellText(row[i]) !== '');
+      if (extra.length) {
+        const sep = document.createElement('div');
+        sep.className = 'eng-tip-sep';
+        dl.appendChild(sep);
+        extra.forEach(([c, i]) => add(c, cellText(row[i])));
+      }
+    } else {
+      add('Planilha', 'sem dados desta FOP');
+    }
+    const pos = document.createElement('div');
+    pos.className = 'eng-tip-pos';
+    pos.textContent = `📍 ${fmt(f.x)} m da frente · ${sideOf(f.y)} ${fmt(Math.abs(f.y))} m`;
+    tip.append(title, dl, pos);
+    tip.hidden = false;
+    const stageW = canvas.parentElement.clientWidth;
+    const left = canvas.offsetLeft + px + 16;
+    tip.style.left = `${Math.max(4, Math.min(left, stageW - tip.offsetWidth - 4))}px`;
+    tip.style.top = `${Math.max(4, canvas.offsetTop + py - tip.offsetHeight / 2)}px`;
+  }
+
+  const hideTip = () => { $('engTip').hidden = true; };
+
+  /* ── Interação ────────────────────────────────────────────────────────── */
+
+  /** Item sob o ponteiro: FOPs (por cima) antes dos postos. */
+  function hitTest(px, py) {
+    const gm = geometry();
+    const fl = fops();
+    for (let i = fl.length - 1; i >= 0; i--) {
+      const s = fopShape(gm, fl[i]);
+      if (Math.abs(px - s.px) <= s.w / 2 + 3 && Math.abs(py - s.py) <= s.r + 3) return { kind: 'fop', item: fl[i], px: s.px, py: s.py };
+    }
+    const r = Math.max(10, POSTO_R * gm.scale) + 4;
+    const pl = postos();
+    for (let i = pl.length - 1; i >= 0; i--) {
+      const [x, y] = gm.toPx(pl[i].x, pl[i].y);
+      if (Math.hypot(px - x, py - y) <= r) return { kind: 'posto', item: pl[i], px: x, py: y };
+    }
+    return null;
+  }
+
+  const pointerPos = e => {
+    const rect = canvas.getBoundingClientRect();
+    return [e.clientX - rect.left, e.clientY - rect.top];
+  };
+
+  /* ── Tabelas e seletores ──────────────────────────────────────────────── */
+
+  function renderSelectors() {
+    const carSel = $('engCarSelect');
+    carSel.innerHTML = '';
+    MODELS.forEach(model => ['L2', 'L3', 'L4'].forEach(size => {
+      const opt = document.createElement('option');
+      opt.value = `${model}:${size}`;
+      opt.textContent = `${model} · ${size} (${config.lengths[model][size].toFixed(2)} m)`;
+      carSel.appendChild(opt);
+    }));
+    carSel.value = `${ec().carModel}:${ec().carSize}`;
+    $('engPassSelect').value = String(pass());
+    $('engListTitle').textContent = `Postos do ${pass()}º Passe`;
+  }
+
+  function updatePostoRow(tr, pt) {
+    tr.querySelector('.eng-side').textContent = sideOf(pt.y);
+    tr.querySelectorAll('input[type=number]').forEach(inp => {
+      if (document.activeElement !== inp) inp.value = fmt(pt[inp.dataset.k]);
+    });
+  }
+
+  function renderPostos() {
+    const tbody = $('engTableBody');
+    tbody.innerHTML = '';
+    const list = postos();
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Nenhum posto neste passe. Use ➕ Adicionar Posto ou dê um duplo clique no desenho — pode criar quantos postos quiser.</td></tr>';
+      return;
+    }
+    list.forEach((pt, i) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><b></b></td>
+        <td><input class="eng-input eng-name" type="text" maxlength="40"></td>
+        <td><input class="eng-input" type="number" step="0.05" data-k="x"></td>
+        <td><input class="eng-input" type="number" step="0.05" data-k="y"></td>
+        <td class="eng-side"></td>
+        <td class="eng-fops"></td>
+        <td><button class="btn btn-delete" title="Excluir este posto">✕ Excluir</button></td>
+      `;
+      renderPostoFops(tr.querySelector('.eng-fops'), pt);
+      const num = tr.querySelector('b');
+      num.textContent = `● ${i + 1}`;
+      num.style.color = postoColor(pt);
+      const name = tr.querySelector('.eng-name');
+      name.value = pt.name;
+      name.addEventListener('input', () => { pt.name = name.value; draw(); });
+      name.addEventListener('change', () => { renderSheet(); saveToLocalMemory(); });
+      tr.querySelectorAll('input[type=number]').forEach(inp => {
+        inp.addEventListener('change', () => {
+          const v = parseFloat(inp.value);
+          if (Number.isFinite(v)) pt[inp.dataset.k] = v;
+          inp.value = fmt(pt[inp.dataset.k]);
+          updatePostoRow(tr, pt);
+          draw();
+          saveToLocalMemory();
+        });
+      });
+      tr.querySelector('.btn-delete').addEventListener('click', () => removePosto(pt));
+      updatePostoRow(tr, pt);
+      tr.dataset.id = pt.id;
+      tbody.appendChild(tr);
+    });
+  }
+
+  /** FOPs incluídas no posto (etiquetas; clicar tira do posto) e seletor para incluir outra FOP da planilha. */
+  function renderPostoFops(cell, pt) {
+    const map = fopPostoMap();
+    const mine = Object.keys(map).filter(k => map[k] === pt.id);
+    const wrap = document.createElement('div');
+    wrap.className = 'eng-chips';
+    mine.forEach(key => {
+      const chip = document.createElement('button');
+      chip.className = 'eng-chip';
+      chip.style.borderColor = postoColor(pt);
+      chip.textContent = `FOP ${key} ✕`;
+      chip.title = 'Tirar esta FOP do posto';
+      chip.addEventListener('click', () => { delete map[key]; afterFopPostoChange(); });
+      wrap.appendChild(chip);
+    });
+    const keys = [...fopRows().keys()].filter(k => map[k] !== pt.id);
+    if (keys.length) {
+      const sel = document.createElement('select');
+      sel.className = 'eng-input';
+      sel.title = 'Incluir uma FOP da planilha neste posto (se ela estiver em outro posto, muda para este)';
+      sel.innerHTML = '<option value="">➕ incluir FOP…</option>';
+      keys.forEach(k => {
+        const opt = document.createElement('option');
+        const other = fopPosto(k);
+        opt.value = k;
+        opt.textContent = other ? `FOP ${k} (em ${other.name})` : `FOP ${k}`;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => {
+        if (!sel.value) return;
+        map[sel.value] = pt.id;
+        afterFopPostoChange();
+      });
+      wrap.appendChild(sel);
+    } else if (!mine.length) {
+      const hint = document.createElement('span');
+      hint.className = 'text-muted';
+      hint.textContent = sheetData() ? '—' : 'importe a planilha';
+      wrap.appendChild(hint);
+    }
+    cell.appendChild(wrap);
+  }
+
+  /** A classificação FOP → posto mudou: atualiza as duas tabelas, o desenho e salva. */
+  function afterFopPostoChange() {
+    renderPostos();
+    renderSheet();
+    draw();
+    saveToLocalMemory();
+  }
+
+  /**
+   * Dados da planilha do passe: todas as colunas como vieram. Se houver coluna de FOP, cada linha ganha o botão
+   * para colocar/tirar a FOP da tela e o seletor do posto em que ela é feita.
+   */
+  function renderSheet() {
+    const sheet = ec().sheet;
+    const data = sheetData();
+    $('engSheetTitle').textContent = `📄 Planilha de Engajamento — ${pass()}º Passe`;
+    $('engSheetBadge').textContent = sheet
+      ? `${sheet.fileName} · ${Object.keys(sheet.passes).length} aba(s) de passe${sheet.importedAt ? ` · ${sheet.importedAt}` : ''}`
+      : 'Nenhuma planilha carregada';
+    const head = $('engSheetHead');
+    const body = $('engSheetBody');
+    head.innerHTML = '';
+    body.innerHTML = '';
+    if (!data) {
+      body.innerHTML = `<tr><td class="text-muted">${sheet ? 'A planilha não tem aba para este passe.' : 'Importe a planilha (.xlsx) com uma aba por passe; a 1ª linha de cada aba é o cabeçalho (FOP, Torque (Nm), Soquete, Nº de apertos…).'}</td></tr>`;
+      return;
+    }
+    const col = detectSheetColumns(data.columns);
+    const hasFop = col.fop >= 0;
+    const hr = document.createElement('tr');
+    [...(hasFop ? ['Tela', 'Posto'] : []), ...data.columns].forEach(c => {
+      const th = document.createElement('th');
+      th.textContent = c;
+      hr.appendChild(th);
+    });
+    head.appendChild(hr);
+    const placed = new Set(fops().map(f => f.fop));
+    data.rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const key = hasFop ? cellText(r[col.fop]) : '';
+      if (hasFop) {
+        const tdBtn = document.createElement('td');
+        if (key) {
+          const btn = document.createElement('button');
+          const on = placed.has(key);
+          btn.className = on ? 'btn-mem btn-mem-muted btn-fop' : 'btn-mem btn-mem-purple btn-fop';
+          btn.textContent = on ? '✕ Tirar' : '➕ Na tela';
+          btn.title = on ? 'Tira esta FOP da tela' : 'Coloca esta FOP na tela para posicioná-la no carro';
+          btn.addEventListener('click', () => (on ? removeFop(key) : addFop(key)));
+          tdBtn.appendChild(btn);
+        }
+        const tdPosto = document.createElement('td');
+        if (key) {
+          const sel = document.createElement('select');
+          sel.className = 'eng-input';
+          sel.title = 'Posto em que esta FOP é feita';
+          sel.innerHTML = '<option value="">— sem posto —</option>';
+          postos().forEach(pt => {
+            const opt = document.createElement('option');
+            opt.value = String(pt.id);
+            opt.textContent = pt.name;
+            sel.appendChild(opt);
+          });
+          const cur = fopPosto(key);
+          sel.value = cur ? String(cur.id) : '';
+          sel.addEventListener('change', () => {
+            const p = postos().find(pt => String(pt.id) === sel.value);
+            if (p) fopPostoMap()[key] = p.id;
+            else delete fopPostoMap()[key];
+            afterFopPostoChange();
+          });
+          tdPosto.appendChild(sel);
+        }
+        tr.append(tdBtn, tdPosto);
+      }
+      r.forEach(v => {
+        const td = document.createElement('td');
+        td.textContent = cellText(v);
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+  }
+
+  function render() {
+    renderSelectors();
+    renderPostos();
+    renderSheet();
+    draw();
+  }
+
+  /* ── Postos ───────────────────────────────────────────────────────────── */
+
+  /** Posição inicial ao lado do carro, alternando LE / LD. */
+  const defaultPostoPos = k => ({ x: snap(((k >> 1) % 4 + 1) * carLen() / 5), y: snap((k % 2 ? -1 : 1) * (carWidth() / 2 + 0.8)) });
+
+  function addPosto(at) {
+    const list = postos();
+    const n = list.length;
+    const pos = at || defaultPostoPos(n);
+    list.push({ id: Date.now() + n, name: `Posto ${n + 1}`, x: pos.x, y: pos.y });
+    renderPostos();
+    renderSheet();
+    draw();
+    saveToLocalMemory();
+  }
+
+  function removePosto(pt) {
+    const list = postos();
+    const i = list.indexOf(pt);
+    if (i < 0) return;
+    list.splice(i, 1);
+    const map = fopPostoMap();
+    Object.keys(map).forEach(k => { if (map[k] === pt.id) delete map[k]; });   // FOPs desse posto ficam sem posto
+    renderPostos();
+    renderSheet();
+    draw();
+    saveToLocalMemory();
+  }
+
+  /* ── FOPs ─────────────────────────────────────────────────────────────── */
+
+  /** Posição inicial sobre o carro, espalhada em grade (o usuário arrasta para o local da operação). */
+  function defaultFopPos(k) {
+    const L = carLen(), Wc = carWidth();
+    return { x: snap(L * ((k % 6) + 0.5) / 6), y: snap((((k / 6) | 0) % 3 - 1) * Wc / 4) };
+  }
+
+  function placeFop(key) {
+    if (!key || fops().some(f => f.fop === key)) return false;
+    const pos = defaultFopPos(fops().length);
+    fops().push({ id: Date.now() + fops().length, fop: key, x: pos.x, y: pos.y });
+    return true;
+  }
+
+  function addFop(key) {
+    if (!placeFop(key)) return;
+    renderSheet();
+    draw();
+    saveToLocalMemory();
+  }
+
+  function addAllFops() {
+    const keys = [...fopRows().keys()];
+    if (!keys.length) {
+      showMemToast(sheetData() ? 'A aba deste passe não tem coluna de FOP' : 'Importe a planilha primeiro', true);
+      return;
+    }
+    const added = keys.filter(placeFop).length;
+    renderSheet();
+    draw();
+    saveToLocalMemory();
+    showMemToast(added ? `✓ ${added} FOP(s) colocada(s) na tela` : '✓ Todas as FOPs já estão na tela');
+  }
+
+  function removeFop(key) {
+    const list = fops();
+    const i = list.findIndex(f => f.fop === key);
+    if (i < 0) return;
+    list.splice(i, 1);
+    hideTip();
+    renderSheet();
+    draw();
+    saveToLocalMemory();
+  }
+
+  /* ── Planilha ─────────────────────────────────────────────────────────── */
+
+  /**
+   * Coluna "Posto" da planilha: cada nome distinto vira (ou atualiza) um posto do passe e classifica a FOP da linha.
+   * Colunas "Da frente"/"Lateral" (se houver) posicionam o posto.
+   */
+  function syncFromSheet(passes) {
+    let created = 0;
+    Object.entries(passes).forEach(([n, data]) => {
+      const col = detectSheetColumns(data.columns);
+      if (col.posto < 0) return;
+      const list = ec().postos[n] || (ec().postos[n] = []);
+      const map = ec().fopPostos[n] || (ec().fopPostos[n] = {});
+      data.rows.forEach(r => {
+        const name = cellText(r[col.posto]);
+        if (!name) return;
+        let pt = list.find(p => p.name === name);
+        if (!pt) {
+          const pos = defaultPostoPos(list.length);
+          pt = { id: Date.now() + created, name, x: pos.x, y: pos.y };
+          list.push(pt);
+          created++;
+        }
+        const x = col.x >= 0 ? parseFloat(cellText(r[col.x]).replace(',', '.')) : NaN;
+        const y = col.y >= 0 ? parseFloat(cellText(r[col.y]).replace(',', '.')) : NaN;
+        if (Number.isFinite(x)) pt.x = x;
+        if (Number.isFinite(y)) pt.y = y;
+        const key = col.fop >= 0 ? cellText(r[col.fop]) : '';
+        if (key) map[key] = pt.id;
+      });
+    });
+    return created;
+  }
+
+  async function importSheet(file) {
+    try {
+      const passes = sheetsToPasses(await XlsxReader.read(await file.arrayBuffer()));
+      if (!Object.keys(passes).length) throw new Error('nenhuma aba com dados');
+      const now = new Date();
+      ec().sheet = { fileName: file.name, importedAt: `${Fmt.isoDate(now)} ${Fmt.clock(now)}`, passes };
+      const created = syncFromSheet(passes);
+      const nFops = Object.values(passes).reduce((acc, d) => acc + (detectSheetColumns(d.columns).fop >= 0 ? d.rows.length : 0), 0);
+      render();
+      saveToLocalMemory();
+      showMemToast(`✓ Planilha carregada: ${Object.keys(passes).length} passe(s), ${nFops} FOP(s)${created ? `, ${created} posto(s) criado(s)` : ''} — use ➕ Na tela para posicionar`);
+    } catch (err) {
+      showMemToast(`Erro na planilha: ${err.message}`, true);
+    }
+  }
+
+  function clearSheet() {
+    ec().sheet = null;
+    hideTip();
+    renderPostos();
+    renderSheet();
+    draw();
+    saveToLocalMemory();
+    showMemToast('✓ Planilha removida');
+  }
+
+  /* ── Inicialização ────────────────────────────────────────────────────── */
+
+  function init() {
+    canvas = $('engCanvas');
+    ctx = canvas.getContext('2d');
+    $('engCarSelect').addEventListener('change', e => {
+      const [model, size] = e.target.value.split(':');
+      ec().carModel = model;
+      ec().carSize = size;
+      draw();
+      saveToLocalMemory();
+    });
+    $('engSheetInput').addEventListener('change', e => {
+      const file = e.target.files && e.target.files[0];
+      if (file) importSheet(file).finally(() => { e.target.value = ''; });
+    });
+    $('engPassSelect').addEventListener('change', e => {
+      ec().pass = Number(e.target.value);
+      hideTip();
+      render();
+      saveToLocalMemory();
+    });
+    canvas.addEventListener('pointerdown', e => {
+      const [px, py] = pointerPos(e);
+      const hit = hitTest(px, py);
+      if (!hit) return;
+      const [mx, my] = geometry().toM(px, py);
+      dragging = { item: hit.item, kind: hit.kind, dx: hit.item.x - mx, dy: hit.item.y - my };
+      hideTip();
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ponteiro já liberado */ }
+      e.preventDefault();
+      draw();
+    });
+    canvas.addEventListener('pointermove', e => {
+      const [px, py] = pointerPos(e);
+      if (dragging) {
+        const [mx, my] = geometry().toM(px, py);
+        dragging.item.x = snap(mx + dragging.dx);
+        dragging.item.y = snap(my + dragging.dy);
+        if (dragging.kind === 'posto') {
+          const tr = $('engTableBody').querySelector(`tr[data-id="${dragging.item.id}"]`);
+          if (tr) updatePostoRow(tr, dragging.item);
+        }
+        draw();
+        return;
+      }
+      const hit = hitTest(px, py);
+      canvas.style.cursor = hit ? 'grab' : 'crosshair';
+      if ((hit && hit.item) !== (hover && hover.item)) {
+        hover = hit;
+        draw();
+      }
+      if (hit && hit.kind === 'fop') showTip(hit.item, hit.px, hit.py);
+      else hideTip();
+    });
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = null;
+      draw();
+      saveToLocalMemory();
+    };
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+    canvas.addEventListener('pointerleave', () => {
+      hideTip();
+      if (!dragging && hover) { hover = null; draw(); }
+    });
+    canvas.addEventListener('dblclick', e => {
+      const [px, py] = pointerPos(e);
+      if (hitTest(px, py)) return;
+      const [mx, my] = geometry().toM(px, py);
+      addPosto({ x: snap(mx), y: snap(my) });
+    });
+    render();
+  }
+
+  return { init, render, draw, addPosto, addAllFops, clearSheet };
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 11. PERSISTÊNCIA (memória do PC, exportar / importar, migração de formatos antigos)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 function serializeConfig() {
@@ -3432,6 +4415,52 @@ function mergeConfig(target, cfg) {
     delete target.servCfg.XDF.x_start;   // XDF: Ponto 0 e base são o mesmo controle
     if (cfg.servCfg.X62) Object.assign(target.servCfg.X62, cfg.servCfg.X62);
   }
+  if (cfg.engCfg && typeof cfg.engCfg === 'object') {
+    const ec = cfg.engCfg, te = target.engCfg;
+    if (MODELS.includes(ec.carModel)) te.carModel = ec.carModel;
+    if (['L2', 'L3', 'L4'].includes(ec.carSize)) te.carSize = ec.carSize;
+    if (ENG_PASSES.includes(Number(ec.pass))) te.pass = Number(ec.pass);
+    if (ec.postos && typeof ec.postos === 'object') {
+      ENG_PASSES.forEach(n => {
+        const list = ec.postos[n];
+        if (!Array.isArray(list)) return;
+        te.postos[n] = list
+          .filter(pt => pt && Number.isFinite(Number(pt.x)) && Number.isFinite(Number(pt.y)))
+          .map((pt, i) => ({ id: pt.id ?? i + 1, name: String(pt.name ?? `Posto ${i + 1}`), x: Number(pt.x), y: Number(pt.y) }));
+      });
+    }
+    if (ec.fops && typeof ec.fops === 'object') {
+      ENG_PASSES.forEach(n => {
+        const list = ec.fops[n];
+        if (!Array.isArray(list)) return;
+        te.fops[n] = list
+          .filter(f => f && Number.isFinite(Number(f.x)) && Number.isFinite(Number(f.y)) && String(f.fop ?? '') !== '')
+          .map((f, i) => ({ id: f.id ?? i + 1, fop: String(f.fop), x: Number(f.x), y: Number(f.y) }));
+      });
+    }
+    if (ec.fopPostos && typeof ec.fopPostos === 'object') {
+      ENG_PASSES.forEach(n => {
+        const m = ec.fopPostos[n];
+        if (!m || typeof m !== 'object') return;
+        te.fopPostos[n] = Object.fromEntries(Object.entries(m).filter(([, id]) => id !== null && id !== undefined));
+      });
+    }
+    if (ec.sheet === null) te.sheet = null;
+    else if (ec.sheet && typeof ec.sheet === 'object' && ec.sheet.passes && typeof ec.sheet.passes === 'object') {
+      const cell = v => (typeof v === 'number' && Number.isFinite(v) ? v : String(v ?? ''));
+      const passes = {};
+      ENG_PASSES.forEach(n => {
+        const sh = ec.sheet.passes[n];
+        if (!sh || !Array.isArray(sh.columns) || !Array.isArray(sh.rows)) return;
+        passes[n] = {
+          sheet: String(sh.sheet ?? ''),
+          columns: sh.columns.map(c => String(c ?? '')),
+          rows: sh.rows.filter(Array.isArray).map(r => r.map(cell))
+        };
+      });
+      te.sheet = { fileName: String(ec.sheet.fileName ?? ''), importedAt: String(ec.sheet.importedAt ?? ''), passes };
+    }
+  }
 }
 
 /** Aplica uma configuração e reconstrói a interface. @returns {boolean} aplicada */
@@ -3441,6 +4470,7 @@ function applyConfig(cfg, showFeedback = false) {
   syncTopControls();
   buildParamControls();
   recompute(true);
+  Engagement.render();
   if (showFeedback) showMemToast('✓ Parâmetros Importados');
   return true;
 }
@@ -3491,7 +4521,7 @@ function resetDefaultParams() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * 11. AÇÕES, PROTEÇÃO E INICIALIZAÇÃO
+ * 12. AÇÕES, PROTEÇÃO E INICIALIZAÇÃO
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 function setSeqMode(m) {
@@ -3698,7 +4728,11 @@ const ACTIONS = {
   downloadTxt: () => Protection.downloadSource(),
   exportParams: exportParamsFile,
   importParams: () => $('importParamsInput').click(),
-  resetParams: resetDefaultParams
+  resetParams: resetDefaultParams,
+  engAddPosto: () => Engagement.addPosto(),
+  engImportSheet: () => $('engSheetInput').click(),
+  engAddAllFops: () => Engagement.addAllFops(),
+  engClearSheet: () => Engagement.clearSheet()
 };
 
 function bindActions() {
@@ -3709,6 +4743,7 @@ function bindActions() {
   });
   $('carSelectDropdown').addEventListener('change', e => selectCarIndexLog(e.target.value));
   $('cfgTabSelect').addEventListener('change', e => setCfgTab(e.target.value));
+  $('appViewSelect').addEventListener('change', e => setView(e.target.value));
   $('importParamsInput').addEventListener('change', importParamsFile);
   $('timeScrubber').addEventListener('input', e => { playback.simTime = parseFloat(e.target.value); });
 }
@@ -3770,7 +4805,9 @@ function boot() {
     Renderer.fitHeight();
     Renderer.remeasure();
     refreshAutoFields();
+    if (ui.view === 'engajamento') Engagement.draw();
   });
+  Engagement.init();
   bindViewControls();
   bindCanvasResizer();
   buildParamControls();
