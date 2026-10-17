@@ -368,6 +368,7 @@ class Session {
           const cs = getComputedStyle(el);
           const props = [];
           for (let i = 0; i < cs.length; i++) props.push(cs[i] + ':' + cs.getPropertyValue(cs[i]));
+          props.sort();   // a ordem das variáveis CSS (--x) listadas pelo Chromium varia entre execuções
           return el.tagName + '|' + props.join(';');
         });
         return { n: els.length, hash: await __sha(rows.join('\n')), rows };
